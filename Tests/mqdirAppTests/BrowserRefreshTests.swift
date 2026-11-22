@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import XCTest
 
@@ -172,6 +173,90 @@ final class BrowserRefreshTests: XCTestCase {
             XCTAssertTrue(model.isFiltering)
             XCTAssertEqual(model.searchRoots.count, 1)
             XCTAssertEqual(model.visibleEntries.map(\.name), ["artifact.pdf"])
+        }
+    }
+
+    @MainActor
+    func testKeyboardRenameRequiresOneItemAndCanBeCancelledOrCommitted() async throws {
+        try await withBrowser { root, model in
+            let first = root.appendingPathComponent("first.txt")
+            let second = root.appendingPathComponent("second.txt")
+            try Data().write(to: first)
+            try Data().write(to: second)
+            model.reload()
+            try await self.waitFor { !model.isLoading && model.entries.count == 2 }
+            model.beginRenameForActiveSelection()
+            XCTAssertNil(model.renamingEntryID)
+            model.selectAll()
+            model.beginRenameForActiveSelection()
+            XCTAssertNil(model.renamingEntryID)
+            let entry = try XCTUnwrap(model.entries.first(where: { $0.name == "first.txt" }))
+            model.replaceSelection(entry.id)
+            model.beginRenameForActiveSelection()
+            XCTAssertEqual(model.renamingEntryID, entry.id)
+            model.renameDraft = "cancelled.txt"
+            model.cancelRename()
+            XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+            XCTAssertNil(model.renamingEntryID)
+            model.beginRenameForActiveSelection()
+            model.renameDraft = "renamed.txt"
+            model.commitRename()
+            let renamed = root.appendingPathComponent("renamed.txt")
+            try await self.waitFor { FileManager.default.fileExists(atPath: renamed.path) }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+        }
+    }
+
+    @MainActor
+    func testPasteboardJobsUseOnlyTheReceivingBrowsersCurrentFolder() async throws {
+        try await withBrowser { root, sourceBrowser in
+            let folder = root.appendingPathComponent("destination", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            let source = root.appendingPathComponent("source.txt")
+            try Data("contents".utf8).write(to: source)
+            let pasteboard = NSPasteboard(name: .init(UUID().uuidString))
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.writeObjects([source as NSURL])
+
+            let receiver = FolderBrowserViewModel(watchingDirectories: false)
+            receiver.openFolder(folder)
+            try await self.waitFor { !receiver.isLoading }
+            receiver.pasteFromPasteboard(pasteboard: pasteboard)
+            let copied = folder.appendingPathComponent("source.txt")
+            try await self.waitFor { FileManager.default.fileExists(atPath: copied.path) }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+
+            receiver.pasteFromPasteboard(as: .move, pasteboard: pasteboard)
+            let moved = folder.appendingPathComponent("source 2.txt")
+            try await self.waitFor {
+                !FileManager.default.fileExists(atPath: source.path) &&
+                    FileManager.default.fileExists(atPath: moved.path) &&
+                    FileWorkCenter.shared.jobs.last?.isActive == false
+            }
+            XCTAssertEqual(sourceBrowser.folderURL?.path, root.path)
+            XCTAssertEqual(try Data(contentsOf: copied), Data("contents".utf8))
+            XCTAssertEqual(try Data(contentsOf: moved), Data("contents".utf8))
+        }
+    }
+
+    @MainActor
+    func testOpenSelectedFolderAndCreateFolderUseCurrentLocation() async throws {
+        try await withBrowser { root, model in
+            let folder = root.appendingPathComponent("child", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            model.reload()
+            try await self.waitFor { !model.isLoading && model.entries.count == 1 }
+            model.replaceSelection(try XCTUnwrap(model.entries.first).id)
+            model.openSelected()
+            try await self.waitFor { !model.isLoading && model.folderURL?.path == folder.path }
+            model.createNewFolder()
+            model.createNewFolder()
+            XCTAssertEqual(
+                Set(try FileManager.default.contentsOfDirectory(atPath: folder.path)),
+                ["untitled folder", "untitled folder 2"]
+            )
+            model.openParentFolder()
+            try await self.waitFor { !model.isLoading && model.folderURL?.path == root.path }
         }
     }
 

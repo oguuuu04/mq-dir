@@ -92,6 +92,10 @@ extension ShortcutModifiers {
 
 extension ShortcutBinding {
     /// Combined ⌃⌥⇧⌘<key> string for the Settings preview.
+    var keyboardShortcut: KeyboardShortcut {
+        KeyboardShortcut(key.keyEquivalent, modifiers: modifiers.eventModifiers)
+    }
+
     var displayString: String {
         modifiers.displayGlyphs + key.displayGlyph
     }
@@ -102,6 +106,6 @@ extension View {
     /// the SwiftUI form so the menu builder reads as a single line:
     /// `Button("...") { ... }.keyboardShortcut(binding)`.
     func keyboardShortcut(_ binding: ShortcutBinding) -> some View {
-        self.keyboardShortcut(binding.key.keyEquivalent, modifiers: binding.modifiers.eventModifiers)
+        self.keyboardShortcut(binding.keyboardShortcut)
     }
 }

@@ -76,12 +76,14 @@ struct TreeFileListView: View {
             // Shift+↑/↓ range selection in tree mode. `.repeat` keeps
             // a held arrow key auto-scrolling like Finder does.
             .onKeyPress(.downArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrow(by: 1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
             .onKeyPress(.upArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrow(by: -1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
@@ -97,13 +99,18 @@ struct TreeFileListView: View {
             }
             .onKeyPress(.return, phases: [.down]) { keyPress in
                 guard viewModel.renamingEntryID == nil else { return .ignored }
-                if !isFocused { onFocus() }
-                if keyPress.modifiers.contains(.command),
+                if keyPress.modifiers == .command,
+                   viewModel.selection.count == 1,
                    let entry = viewModel.selectedEntry, entry.isDirectory {
+                    if !isFocused { onFocus() }
                     AppCommand.openURLInNewTab(url: entry.url).post()
-                } else {
-                    viewModel.openSelected()
+                    return .handled
                 }
+                guard keyPress.modifiers.isEmpty,
+                      workspace.workspace.settings.binding(for: .rename) == ShortcutAction.rename.defaultBinding
+                else { return .ignored }
+                if !isFocused { onFocus() }
+                viewModel.beginRenameForActiveSelection()
                 return .handled
             }
             .onKeyPress(.space) {

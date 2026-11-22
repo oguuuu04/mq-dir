@@ -16,6 +16,7 @@ enum AppCommand: Equatable {
     // MARK: File menu / navigation (handled by NavigationNotifications)
     case openFolder
     case openSelected
+    case newFolder
     case revealSelected
     case reload
     case parentFolder
@@ -34,8 +35,8 @@ enum AppCommand: Equatable {
     // MARK: Edit menu — pasteboard / selection (EditMenuNotifications)
     case selectAll
     case copy
-    case cut
     case paste
+    case movePasteboardItems
     case delete
     /// Edit → Delete Immediately (⌘⌥⌫) — destructive NSAlert, bypasses trash.
     case permanentDelete

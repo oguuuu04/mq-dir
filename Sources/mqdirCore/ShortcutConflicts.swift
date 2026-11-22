@@ -1,7 +1,9 @@
 import Foundation
 
 enum ShortcutConflicts {
-    static func reservedName(for binding: ShortcutBinding) -> String? {
+    static func reservedName(for binding: ShortcutBinding, allowing action: ShortcutAction? = nil) -> String? {
+        if binding == ShortcutAction.rename.defaultBinding { return action == .rename ? nil : "Rename" }
+        if binding == ShortcutAction.openFolder.defaultBinding { return action == .openFolder ? nil : "Open Folder" }
         let fixed: [(ShortcutBinding, String)] = [
             (.init(key: .character("n"), modifiers: [.command, .shift]), "New Folder"),
             (.init(key: .upArrow, modifiers: []), "Navigate Up"),
@@ -13,6 +15,9 @@ enum ShortcutConflicts {
             (.init(key: .character("x"), modifiers: .command), "Cut"),
             (.init(key: .character("c"), modifiers: .command), "Copy"),
             (.init(key: .character("v"), modifiers: .command), "Paste"),
+            (.init(key: .character("v"), modifiers: [.command, .option]), "Move Items Here"),
+            (.init(key: .character("o"), modifiers: .command), "Open Selected"),
+            (.init(key: .downArrow, modifiers: .command), "Open Selected"),
             (.init(key: .character("a"), modifiers: .command), "Select All"),
             (.init(key: .character("q"), modifiers: .command), "Quit"),
             (.init(key: .character(","), modifiers: .command), "Settings"),
@@ -25,7 +30,6 @@ enum ShortcutConflicts {
             (.init(key: .character("]"), modifiers: [.command, .shift]), "Next Tab"),
             (.init(key: .character("c"), modifiers: [.command, .option]), "Copy File Path"),
             (.init(key: .character("c"), modifiers: [.command, .option, .shift]), "Copy Folder Path"),
-            (.init(key: .return, modifiers: []), "Open Selected"),
             (.init(key: .return, modifiers: .command), "Open in New Tab"),
         ]
         if let match = fixed.first(where: { $0.0 == binding }) { return match.1 }

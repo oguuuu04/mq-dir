@@ -163,7 +163,6 @@ struct FileEntryContextMenu: View {
             // Rename only makes sense for a single row at a time —
             // multi-rename is its own UX and lives elsewhere.
             Button("Rename") { viewModel.beginRename(target) }
-                .keyboardShortcut(workspace.workspace.settings.binding(for: .rename))
         }
         if anyNeedsNFCNormalization {
             Button(count > 1 ? "Normalize \(count) Filenames to NFC" : "Normalize Filename to NFC") {

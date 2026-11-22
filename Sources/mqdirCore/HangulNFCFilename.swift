@@ -41,12 +41,12 @@ public enum HangulNFCFilename {
         let dstPath = dirPath + "/" + nfc
 
         let rc = srcPath.withCString { s in
-            dstPath.withCString { d in Darwin.rename(s, d) }
+            dstPath.withCString { d in Darwin.renamex_np(s, d, UInt32(RENAME_EXCL)) }
         }
         guard rc == 0 else {
             let err = errno
             FileHandle.standardError.write(
-                Data("[mq-dir NFC] rename(2) failed for \(srcPath): errno=\(err)\n".utf8)
+                Data("[mq-dir NFC] renamex_np failed for \(srcPath): errno=\(err)\n".utf8)
             )
             return nil
         }

@@ -67,6 +67,10 @@ extension FileOperationService {
             case .copy, .move, .drop, .duplicate:
                 let folder = request.kind == .duplicate ? source.deletingLastPathComponent() : request.destination
                 guard let folder else { throw CocoaError(.fileWriteInvalidFileName) }
+                if request.kind == .move {
+                    // Distinguish a disappeared source from a same-folder no-op.
+                    _ = try FileManager.default.attributesOfItem(atPath: source.path)
+                }
                 var move = request.kind == .move
                 if request.kind == .drop {
                     let keys: Set<URLResourceKey> = [.volumeIdentifierKey]
@@ -129,7 +133,9 @@ extension FileOperationService {
         normalizeHangul: Bool = false, fileManager: FileManager = .default, recordUndo: Bool = false, cancellation: ProcessRunner.Cancellation = .init()
     ) -> FileWorkOutcome {
         var target = folder.appendingPathComponent(source.lastPathComponent)
-        if source.standardizedFileURL == target.standardizedFileURL && !duplicateInPlace {
+        let sourceParent = source.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        let destinationFolder = folder.resolvingSymlinksInPath().standardizedFileURL
+        if !duplicateInPlace && sourceParent.path == destinationFolder.path {
             return FileWorkOutcome(sources: [source], destination: source, status: .skipped("Already in this folder"))
         }
         let sourceParts = source.resolvingSymlinksInPath().standardizedFileURL.pathComponents

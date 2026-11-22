@@ -725,6 +725,8 @@ private struct NavigationNotifications: ViewModifier {
                     focusedPane.chooseFolder()
                 case .openSelected:
                     focusedPane.openSelected()
+                case .newFolder:
+                    focusedPane.createNewFolder()
                 case .revealSelected:
                     focusedPane.revealSelected()
                 case .reload:
@@ -816,10 +818,10 @@ private struct EditMenuNotifications: ViewModifier {
                     focusedPane.selectAll()
                 case .copy:
                     focusedPane.copySelectionToPasteboard()
-                case .cut:
-                    focusedPane.cutSelectionToPasteboard()
                 case .paste:
                     focusedPane.pasteFromPasteboard(normalizeHangul: normalizeHangul)
+                case .movePasteboardItems:
+                    focusedPane.pasteFromPasteboard(as: .move, normalizeHangul: normalizeHangul)
                 case .delete:
                     focusedPane.moveSelectionToTrash()
                 case .permanentDelete:

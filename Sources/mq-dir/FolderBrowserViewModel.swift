@@ -1125,9 +1125,14 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
             )
             reload()
         } catch {
-            FileHandle.standardError.write(
-                Data("[mq-dir new folder] \(error.localizedDescription)\n".utf8)
-            )
+            let alert = NSAlert(error: error)
+            alert.messageText = "Could Not Create Folder"
+            alert.informativeText = error.localizedDescription
+            if let window = NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
         }
     }
 
@@ -1232,7 +1237,7 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
     /// empty-area context menu to grey out "Paste" when there's
     /// nothing pasteable.
     var canPasteFiles: Bool {
-        NSPasteboard.general.canReadObject(forClasses: [NSURL.self], options: nil)
+        !PasteboardFiles.urls(in: .general).isEmpty
     }
 
     // MARK: Selection (multi-select with cmd / shift)
@@ -1337,46 +1342,17 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
         pb.writeObjects(urls.map { $0 as NSURL })
     }
 
-    /// Cut: same as copy but marks the pasteboard so a subsequent
-    /// `pasteFromPasteboard()` *moves* the files instead of copying.
-    /// macOS doesn't have a standard "cut" pasteboard convention so
-    /// we mark with a private type that only mq-dir reads. Other apps
-    /// (Finder, terminals) see the file URLs and treat the operation
-    /// as a regular copy on their end — there's no way around that
-    /// without OS-level cut, and matching Windows cut semantics
-    /// inside mq-dir is the user-facing requirement.
-    func cutSelectionToPasteboard() {
-        let urls = selectedURLs
-        guard !urls.isEmpty else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.writeObjects(urls.map { $0 as NSURL })
-        pb.setData(Data(), forType: Self.cutMarkerType)
-    }
-
-    /// Pasteboard type that marks a cut operation. Empty data — only
-    /// the type's presence matters.
-    static let cutMarkerType = CutPasteboard.markerType
-
-    /// Read file URLs off the system pasteboard and copy (or move,
-    /// when the pasteboard carries our cut marker) them into the
-    /// current folder. Mirrors Finder's ⌘V (copy) and Windows
-    /// File Explorer's ⌘V-after-⌘X (move). Silently skips when the
-    /// pasteboard has no file URLs or no folder is open.
-    func pasteFromPasteboard(normalizeHangul: Bool = false) {
-        guard let folder = folderURL else { return }
-        let pb = NSPasteboard.general
-        guard let sources = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !sources.isEmpty else { return }
-        let isCut = pb.types?.contains(Self.cutMarkerType) == true
-        var revision = pb.changeCount
-        let request = FileWorkRequest(kind: isCut ? .move : .copy, sources: sources,
-            destination: folder, normalizeHangul: normalizeHangul)
-        FileWorkCenter.shared.submit(request) { outcomes in
-            guard isCut, pb.changeCount == revision else { return }
-            let remaining = outcomes.filter { $0.status != .succeeded }.flatMap(\.sources)
-            CutPasteboard.complete(pb, changeCount: revision, remainingURLs: remaining)
-            revision = pb.changeCount
-        }
+    /// Paste standard local file URLs into the active folder. The command
+    /// explicitly chooses copy or move regardless of pasteboard metadata.
+    func pasteFromPasteboard(
+        as kind: PasteboardFiles.Operation = .copy,
+        normalizeHangul: Bool = false,
+        pasteboard: NSPasteboard = .general
+    ) {
+        guard let request = PasteboardFiles.request(
+            from: pasteboard, to: folderURL, operation: kind, normalizeHangul: normalizeHangul
+        ) else { return }
+        FileWorkCenter.shared.submit(request)
     }
 
     /// Convenience around `moveToTrash` that operates on the live
@@ -1583,10 +1559,9 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
         replaceSelection(entry.id)
     }
 
-    /// Begin inline rename for the currently-active selection. Used by
-    /// the ⌘⇧R menu shortcut. No-op if nothing is selected.
+    /// Begin inline rename when there is exactly one selected row.
     func beginRenameForActiveSelection() {
-        guard let entry = selectedEntry else { return }
+        guard renamingEntryID == nil, selection.count == 1, let entry = selectedEntry else { return }
         beginRename(entry)
     }
 
