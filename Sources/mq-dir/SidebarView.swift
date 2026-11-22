@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct SidebarView: View {
     @ObservedObject var viewModel: SidebarViewModel
     @ObservedObject var workspace: WorkspaceManager
-    @ObservedObject var updateManager: UpdateManager
     @ObservedObject var repoCallout: RepoCalloutController
     @ObservedObject var integrations: IntegrationsSidebarModel
     @Binding var selectedURL: URL?
@@ -47,8 +46,6 @@ struct SidebarView: View {
     /// Project being dragged for reorder.
     @State private var draggingProjectID: UUID?
 
-    @State private var showingFeedback = false
-
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -70,21 +67,11 @@ struct SidebarView: View {
             sidebarFooter
         }
         .background(Theme.Color.sidebarBg)
-        .sheet(isPresented: $showingFeedback) {
-            FeedbackSheet(repoCallout: repoCallout)
-        }
     }
 
-    /// Bottom row: a help menu (always visible) and an update pill that
-    /// only appears when Sparkle's background check has flagged a new
-    /// version. The pill is loud on purpose — the previous flat bar was
-    /// quiet enough that users missed available updates.
     private var sidebarFooter: some View {
         HStack(spacing: 8) {
             helpMenu
-            if updateManager.updateAvailable {
-                updatePill
-            }
             if repoCallout.shouldShowPill {
                 repoPill
             }
@@ -99,14 +86,9 @@ struct SidebarView: View {
 
     private var helpMenu: some View {
         Menu {
-            Button("Welcome to mq-dir") { openURL("https://mqdir.com") }
-            Button("Send Feedback") { showingFeedback = true }
+            Link("Report an Issue", destination: URL(string: "https://github.com/oguuuu04/mq-dir/issues/new")!)
             Button("⭐ Star on GitHub") {
                 repoCallout.openRepo()
-            }
-            Divider()
-            Button("Check for Updates") {
-                updateManager.checkForUpdatesAndShowUI()
             }
         } label: {
             Image(systemName: "questionmark.circle")
@@ -120,40 +102,6 @@ struct SidebarView: View {
         .help("Help")
     }
 
-    private var updatePill: some View {
-        Button {
-            updateManager.checkForUpdatesAndShowUI()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(pillLabel)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule().fill(Theme.Color.accent)
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Install the available update")
-    }
-
-    private var pillLabel: String {
-        if let version = updateManager.availableVersion {
-            return "Update Available: \(version)"
-        }
-        return "Update Available"
-    }
-
-    /// Repo callout. Mirrors `updatePill`'s capsule style with a yellow
-    /// tint so the two pills read as a related but distinct "quiet CTA"
-    /// family. Right-click is the explicit anti-nag escape hatch —
-    /// once dismissed, never returns.
     private var repoPill: some View {
         Button {
             repoCallout.openRepo()
@@ -161,7 +109,7 @@ struct SidebarView: View {
             HStack(spacing: 6) {
                 Image(systemName: "star.fill")
                     .font(.system(size: 11, weight: .semibold))
-                Text("Star mq-dir")
+                Text("Star File Manager")
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
             }
@@ -173,17 +121,12 @@ struct SidebarView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Open the mq-dir GitHub repo")
+        .help("Open the File Manager GitHub repository")
         .contextMenu {
             Button("Don't show this again") {
                 repoCallout.dismissPermanently()
             }
         }
-    }
-
-    private func openURL(_ string: String) {
-        guard let url = URL(string: string) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     // MARK: Favorites

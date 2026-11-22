@@ -562,7 +562,7 @@ struct PersistenceService: @unchecked Sendable {
     private let fileManager: FileManager
 
     /// Production initializer: writes to
-    /// `~/Library/Application Support/com.mqdir.app/state.json`.
+    /// `~/Library/Application Support/com.oguuuu04.filemanager/state.json`.
     /// Throws if the support directory cannot be located or created.
     init(fileManager: FileManager = .default) throws {
         #if DEBUG
@@ -577,7 +577,7 @@ struct PersistenceService: @unchecked Sendable {
             appropriateFor: nil,
             create: true
         )
-        let bundleDir = supportRoot.appendingPathComponent("com.mqdir.app", isDirectory: true)
+        let bundleDir = supportRoot.appendingPathComponent("com.oguuuu04.filemanager", isDirectory: true)
         try self.init(stateURL: bundleDir.appendingPathComponent("state.json", isDirectory: false), fileManager: fileManager)
     }
 

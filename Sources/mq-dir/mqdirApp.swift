@@ -5,7 +5,6 @@ import SwiftUI
 struct mqdirApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspace = WorkspaceManager()
-    @StateObject private var updateManager = UpdateManager()
     @StateObject private var repoCallout = RepoCalloutController()
 
     init() {
@@ -24,7 +23,7 @@ struct mqdirApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("mq-dir") {
+        WindowGroup("File Manager") {
             // Key MainWindowView on the active project ID so a project
             // switch tears down the old pane `@StateObject`s and the new
             // instance reads its initial state from the project we're
@@ -32,7 +31,6 @@ struct mqdirApp: App {
             // leave the old pane VMs alive holding stale folder state.
             MainWindowView(
                 workspace: workspace,
-                updateManager: updateManager,
                 repoCallout: repoCallout
             )
                 // Drop the workspace into the environment so deep

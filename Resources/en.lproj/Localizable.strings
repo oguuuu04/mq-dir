@@ -5,5 +5,5 @@
  ko.lproj / ja.lproj / etc. without a refactor. Keys are dot-namespaced.
 */
 
-"mqdir.app.title" = "mq-dir";
+"mqdir.app.title" = "File Manager";
 "mqdir.menu.file.openFolder" = "Open Folder…";

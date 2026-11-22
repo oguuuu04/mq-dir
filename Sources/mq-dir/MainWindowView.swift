@@ -5,7 +5,6 @@ struct MainWindowView: View {
     @ObservedObject private var fileWork = FileWorkCenter.shared
     @State private var folderComparison: FolderComparisonRequest?
     @ObservedObject var workspace: WorkspaceManager
-    @ObservedObject var updateManager: UpdateManager
     @ObservedObject var repoCallout: RepoCalloutController
     @StateObject private var integrations: IntegrationsSidebarModel
 
@@ -55,12 +54,10 @@ struct MainWindowView: View {
 
     init(
         workspace: WorkspaceManager,
-        updateManager: UpdateManager,
         repoCallout: RepoCalloutController
     ) {
         self.workspace = workspace
         self._integrations = StateObject(wrappedValue: IntegrationsSidebarModel(provider: workspace.workspace.settings.integrationProvider))
-        self.updateManager = updateManager
         self.repoCallout = repoCallout
         let project = workspace.activeProject
         self.projectID = project.id
@@ -159,7 +156,6 @@ struct MainWindowView: View {
             SidebarView(
                 viewModel: sidebar,
                 workspace: workspace,
-                updateManager: updateManager,
                 repoCallout: repoCallout,
                 integrations: integrations,
                 selectedURL: $sidebarSelection,
@@ -914,7 +910,6 @@ private struct GlobalNotifications: ViewModifier {
 #Preview {
     MainWindowView(
         workspace: WorkspaceManager(),
-        updateManager: UpdateManager(),
         repoCallout: RepoCalloutController()
     )
         .frame(width: 1100, height: 700)

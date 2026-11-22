@@ -13,9 +13,7 @@ permissions:
 jobs:
   swift-test:
     name: SwiftPM tests
-    runs-on: macos-14
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,12 +37,15 @@ jobs:
 
   xcodebuild:
     name: Generated Xcode app build and service tests
-    runs-on: macos-14
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Install XcodeGen
         run: |

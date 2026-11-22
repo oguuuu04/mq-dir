@@ -20,6 +20,19 @@ final class PersistenceServiceTests: XCTestCase {
         stateURL = nil
     }
 
+    func testDefaultStatePathLeavesUpstreamStateUntouched() throws {
+        let upstreamURL = tempDirectory.appendingPathComponent("com.mqdir.app/state.json")
+        let upstream = try PersistenceService(stateURL: upstreamURL)
+        try upstream.saveState(sampleWorkspaceState())
+        let upstreamBytes = try Data(contentsOf: upstreamURL)
+
+        let service = try PersistenceService(fileManager: ApplicationSupportFileManager(root: tempDirectory))
+        XCTAssertEqual(service.fileURL, tempDirectory.appendingPathComponent("com.oguuuu04.filemanager/state.json"))
+        XCTAssertNil(service.loadState())
+        try service.saveState(sampleWorkspaceState())
+        XCTAssertEqual(try Data(contentsOf: upstreamURL), upstreamBytes)
+    }
+
     // MARK: - Round trip
 
     func testSaveAndLoadRoundTrip() throws {
@@ -764,5 +777,23 @@ final class PersistenceServiceTests: XCTestCase {
             activeProjectID: project.id,
             projects: [project]
         )
+    }
+}
+
+private final class ApplicationSupportFileManager: FileManager, @unchecked Sendable {
+    private let root: URL
+
+    init(root: URL) {
+        self.root = root
+        super.init()
+    }
+
+    override func url(
+        for directory: SearchPathDirectory,
+        in domain: SearchPathDomainMask,
+        appropriateFor url: URL?,
+        create shouldCreate: Bool
+    ) throws -> URL {
+        return root
     }
 }

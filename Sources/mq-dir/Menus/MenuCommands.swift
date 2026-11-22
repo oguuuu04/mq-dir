@@ -163,8 +163,8 @@ struct MenuCommands: Commands {
         }
 
         CommandGroup(replacing: .help) {
-            Link("mq-dir on GitHub",
-                 destination: URL(string: "https://github.com/h5nam/mq-dir")!)
+            Link("File Manager on GitHub",
+                 destination: URL(string: "https://github.com/oguuuu04/mq-dir")!)
         }
     }
 
