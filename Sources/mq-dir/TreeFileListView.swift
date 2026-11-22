@@ -16,6 +16,7 @@ struct TreeFileListView: View {
     @EnvironmentObject private var workspace: WorkspaceManager
     let isFocused: Bool
     let onFocus: () -> Void
+    let onOpenInNewTab: (URL) -> Void
 
     @FocusState private var treeFocused: Bool
 
@@ -103,7 +104,7 @@ struct TreeFileListView: View {
                    viewModel.selection.count == 1,
                    let entry = viewModel.selectedEntry, entry.isDirectory {
                     if !isFocused { onFocus() }
-                    AppCommand.openURLInNewTab(url: entry.url).post()
+                    onOpenInNewTab(entry.url)
                     return .handled
                 }
                 guard keyPress.modifiers.isEmpty,
@@ -245,7 +246,7 @@ struct TreeFileListView: View {
             // Plain double-click navigates into the folder / launches
             // the file as before.
             if NSEvent.modifierFlags.contains(.command), entry.isDirectory {
-                AppCommand.openURLInNewTab(url: entry.url).post()
+                onOpenInNewTab(entry.url)
             } else if entry.isDirectory {
                 viewModel.openFolder(entry.url)
             } else {

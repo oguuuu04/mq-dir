@@ -1,7 +1,20 @@
 import AppKit
 import SwiftUI
 
+private struct BrowserWindowCommandsKey: FocusedValueKey {
+    typealias Value = BrowserWindowCommands
+}
+
+extension FocusedValues {
+    var browserWindowCommands: BrowserWindowCommands? {
+        get { self[BrowserWindowCommandsKey.self] }
+        set { self[BrowserWindowCommandsKey.self] = newValue }
+    }
+}
+
 struct MenuCommands: Commands {
+    @FocusedValue(\.browserWindowCommands) private var windowCommands
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var fileWork = FileWorkCenter.shared
     @ObservedObject var workspace: WorkspaceManager
 
@@ -31,6 +44,8 @@ struct MenuCommands: Commands {
             .keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .newItem) {
+            Button("New Window") { openWindow(id: "browser") }
+                .keyboardShortcut("n", modifiers: .command)
             Button("New Tab") { post(.newTab) }
                 .keyboardShortcut(binding(.newTab))
             Divider()
@@ -193,7 +208,7 @@ struct MenuCommands: Commands {
 
     private func post(_ command: AppCommand) {
         guard Self.textEditor == nil, !(NSApp.keyWindow?.firstResponder is KeyCaptureNSView) else { return }
-        command.post()
+        windowCommands?.send(command)
     }
 
     // Quick Look can install a read-only NSTextView as first responder.

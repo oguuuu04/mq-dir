@@ -5,6 +5,7 @@ enum ShortcutConflicts {
         if binding == ShortcutAction.rename.defaultBinding { return action == .rename ? nil : "Rename" }
         if binding == ShortcutAction.openFolder.defaultBinding { return action == .openFolder ? nil : "Open Folder" }
         let fixed: [(ShortcutBinding, String)] = [
+            (.init(key: .character("n"), modifiers: .command), "New Window"),
             (.init(key: .character("n"), modifiers: [.command, .shift]), "New Folder"),
             (.init(key: .upArrow, modifiers: []), "Navigate Up"),
             (.init(key: .downArrow, modifiers: []), "Navigate Down"),

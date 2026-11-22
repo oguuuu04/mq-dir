@@ -790,7 +790,8 @@ struct BrowserPaneView: View {
             TreeFileListView(
                 viewModel: viewModel,
                 isFocused: isFocused,
-                onFocus: onFocus
+                onFocus: onFocus,
+                onOpenInNewTab: { paneVM.newTab(folderURL: $0) }
             )
         } else {
             listWithHorizontalScroll
@@ -903,7 +904,7 @@ struct BrowserPaneView: View {
                    viewModel.selection.count == 1,
                    let entry = viewModel.selectedEntry, entry.isDirectory {
                     if !isFocused { onFocus() }
-                    AppCommand.openURLInNewTab(url: entry.url).post()
+                    paneVM.newTab(folderURL: entry.url)
                     return .handled
                 }
                 guard keyPress.modifiers.isEmpty,
@@ -1030,7 +1031,7 @@ struct BrowserPaneView: View {
             // mirrors Finder. Plain double-click stays the
             // "navigate into / launch file" path.
             if NSEvent.modifierFlags.contains(.command), entry.isDirectory {
-                AppCommand.openURLInNewTab(url: entry.url).post()
+                paneVM.newTab(folderURL: entry.url)
             } else {
                 viewModel.open(entry)
             }

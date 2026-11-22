@@ -23,7 +23,7 @@ struct mqdirApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("File Manager") {
+        WindowGroup("File Manager", id: "browser") {
             // Key MainWindowView on the active project ID so a project
             // switch tears down the old pane `@StateObject`s and the new
             // instance reads its initial state from the project we're

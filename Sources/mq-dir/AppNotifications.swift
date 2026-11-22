@@ -1,17 +1,8 @@
 import Foundation
 
-/// Typed menu/keyboard command, dispatched through the single
-/// `.mqdirCommand` notification instead of the old per-command
-/// `Notification.Name` fan-out. Posting goes through one helper
-/// (`AppCommand.post()`); MainWindowView's receiver modifiers each switch
-/// on this enum from one publisher. A typo'd command is now a compile
-/// error, and adding a command is "add a case + handle it in the modifier
-/// that owns it" (the switches are exhaustive — the compiler flags a case
-/// no modifier handles).
-///
-/// Only *user-command* notifications (menu / keyboard → focused-pane
-/// actions) live here. Broadcast events keep their own dedicated names —
-/// see the `Notification.Name` extension below for which stayed and why.
+import Combine
+
+/// A menu command addressed to a single browser window.
 enum AppCommand: Equatable {
     // MARK: File menu / navigation (handled by NavigationNotifications)
     case openFolder
@@ -59,41 +50,30 @@ enum AppCommand: Equatable {
     /// Posted by ⌘1…⌘9. Payload is the zero-based tab index; the focused
     /// pane silently ignores out-of-range values.
     case selectTab(index: Int)
-    /// "Open in new tab" — ⌘-click / ⌘-double-click on a folder row in
-    /// tree or list view, or ⌘-click on a cmux row. Appends a new tab in
-    /// the *focused* pane pointing at `url`. Mirrors Finder's
-    /// ⌘-click-on-folder behavior.
-    case openURLInNewTab(url: URL)
-
     // MARK: Pane focus (PaneFocusNotifications)
     /// Posted by Window → Focus Pane N (⌥⌘1–4). Payload is the zero-based
     /// pane index; receivers ignore values outside the active layout's
     /// pane count.
     case focusPane(index: Int)
 
-    /// userInfo key under which the command travels on `.mqdirCommand`.
-    fileprivate static let userInfoKey = "command"
+}
 
-    /// Post this command on the single `.mqdirCommand` channel.
-    func post() {
-        NotificationCenter.default.post(
-            name: .mqdirCommand,
-            object: nil,
-            userInfo: [AppCommand.userInfoKey: self]
-        )
+/// Each browser window owns a separate command stream. The menu obtains the
+/// stream from the focused SwiftUI scene; other windows never subscribe to it.
+@MainActor
+final class BrowserWindowCommands {
+    private let subject = PassthroughSubject<AppCommand, Never>()
+
+    var publisher: AnyPublisher<AppCommand, Never> {
+        subject.eraseToAnyPublisher()
     }
 
-    /// Pull the typed command back out of a received notification.
-    static func from(_ notification: Notification) -> AppCommand? {
-        notification.userInfo?[userInfoKey] as? AppCommand
+    func send(_ command: AppCommand) {
+        subject.send(command)
     }
 }
 
 extension Notification.Name {
-    /// Single channel carrying every typed `AppCommand` in `userInfo`.
-    /// Replaces the ~30 per-command `mqdir*Requested` names.
-    static let mqdirCommand = Notification.Name("mqdir.command")
-
     // MARK: - Non-command notifications (deliberately NOT folded into AppCommand)
     //
     // These are broadcast/lifecycle events, not menu→focused-pane commands,

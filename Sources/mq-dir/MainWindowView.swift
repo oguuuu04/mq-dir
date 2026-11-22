@@ -15,6 +15,7 @@ struct MainWindowView: View {
     @StateObject private var sidebar: SidebarViewModel
 
     @State private var layout: PaneLayout
+    @State private var windowCommands = BrowserWindowCommands()
     @State private var focusedPaneIndex: Int
     @State private var sidebarSelection: URL?
     @FocusState private var searchFocused: Bool
@@ -97,6 +98,7 @@ struct MainWindowView: View {
                 Text(workspace.recoveryMessage ?? "")
             }
             .background(Theme.Color.windowBg)
+            .focusedSceneValue(\.browserWindowCommands, windowCommands)
             .sheet(item: $folderComparison) { FolderComparisonView(request: $0) }
             .onDisappear { scheduleSave() }
             .onReceive(NotificationCenter.default.publisher(for: ExternalFolderRequests.changed)) { _ in openExternalFolders() }
@@ -109,21 +111,24 @@ struct MainWindowView: View {
                 scheduleSave: scheduleSave
             ))
             .modifier(NavigationNotifications(
+                windowCommands: windowCommands,
                 focusedPane: focusedPane,
                 searchActive: $searchActive,
                 searchFocused: $searchFocused,
                 sidebar: sidebar
             ))
             .modifier(EditMenuNotifications(
+                windowCommands: windowCommands,
                 focusedPane: focusedPane,
                 normalizeHangul: workspace.workspace.settings.normalizeHangulOnDragOut
             ))
             .modifier(EditFileActionsNotifications(
+                windowCommands: windowCommands,
                 focusedPane: focusedPane,
                 normalizeHangul: workspace.workspace.settings.normalizeHangulOnDragOut
             ))
-            .modifier(PaneFocusNotifications(layout: layout, focusedPaneIndex: $focusedPaneIndex))
-            .modifier(TabNotifications(focusedPaneVM: focusedPaneVM))
+            .modifier(PaneFocusNotifications(windowCommands: windowCommands, layout: layout, focusedPaneIndex: $focusedPaneIndex))
+            .modifier(TabNotifications(windowCommands: windowCommands, focusedPaneVM: focusedPaneVM))
             .modifier(GlobalNotifications(
                 allPanes: [pane0, pane1, pane2, pane3],
                 saveSynchronously: saveSynchronously
@@ -170,11 +175,15 @@ struct MainWindowView: View {
                     // (toggle), matching the sidebar's "click to filter,
                     // click again to clear" affordance.
                     focusedPane.tagFilter = (focusedPane.tagFilter == tag) ? nil : tag
+                },
+                onSelect: { url in
+                    guard FileManager.default.fileExists(atPath: url.path) else { return }
+                    focusedPane.openFolder(url)
+                },
+                onOpenInNewTab: { url in
+                    focusedPaneVM.newTab(folderURL: url)
                 }
-            ) { url in
-                guard FileManager.default.fileExists(atPath: url.path) else { return }
-                focusedPane.openFolder(url)
-            }
+            )
             .frame(minWidth: 160, idealWidth: Theme.Metrics.sidebarWidth, maxWidth: 280)
 
             VStack(spacing: 0) {
@@ -711,6 +720,7 @@ private struct SaveTriggers: ViewModifier {
 }
 
 private struct NavigationNotifications: ViewModifier {
+    let windowCommands: BrowserWindowCommands
     let focusedPane: FolderBrowserViewModel
     @Binding var searchActive: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -718,8 +728,7 @@ private struct NavigationNotifications: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onReceive(NotificationCenter.default.publisher(for: .mqdirCommand)) { note in
-                guard let command = AppCommand.from(note) else { return }
+            .onReceive(windowCommands.publisher) { command in
                 switch command {
                 case .openFolder:
                     focusedPane.chooseFolder()
@@ -768,6 +777,7 @@ private struct NavigationNotifications: ViewModifier {
 /// own modifier for the same SwiftUI type-checker reason as
 /// `EditMenuNotifications`.
 private struct EditFileActionsNotifications: ViewModifier {
+    let windowCommands: BrowserWindowCommands
     let focusedPane: FolderBrowserViewModel
     /// See `EditMenuNotifications.normalizeHangul` — wired so the ⌘D
     /// duplicate path also normalises the resulting NFD name when on.
@@ -775,8 +785,7 @@ private struct EditFileActionsNotifications: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onReceive(NotificationCenter.default.publisher(for: .mqdirCommand)) { note in
-                guard let command = AppCommand.from(note) else { return }
+            .onReceive(windowCommands.publisher) { command in
                 switch command {
                 case .openWithDefaultApp:
                     focusedPane.openSelectedWithDefaultApp()
@@ -803,6 +812,7 @@ private struct EditFileActionsNotifications: ViewModifier {
 /// expression-complexity ceiling. One small modifier per concern keeps
 /// every `body` cheap to compile.
 private struct EditMenuNotifications: ViewModifier {
+    let windowCommands: BrowserWindowCommands
     let focusedPane: FolderBrowserViewModel
     /// Live "normalise Hangul on drag out" setting, captured where this
     /// modifier is built (in `MainWindowView.body`, which owns the
@@ -811,8 +821,7 @@ private struct EditMenuNotifications: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onReceive(NotificationCenter.default.publisher(for: .mqdirCommand)) { note in
-                guard let command = AppCommand.from(note) else { return }
+            .onReceive(windowCommands.publisher) { command in
                 switch command {
                 case .selectAll:
                     focusedPane.selectAll()
@@ -837,13 +846,14 @@ private struct EditMenuNotifications: ViewModifier {
 /// pane count are silently ignored so a ⌥⌘4 in single-pane layout is a
 /// no-op rather than a hidden focus jump into a stashed pane.
 private struct PaneFocusNotifications: ViewModifier {
+    let windowCommands: BrowserWindowCommands
     let layout: PaneLayout
     @Binding var focusedPaneIndex: Int
 
     func body(content: Content) -> some View {
         content
-            .onReceive(NotificationCenter.default.publisher(for: .mqdirCommand)) { note in
-                guard case let .focusPane(index) = AppCommand.from(note) else { return }
+            .onReceive(windowCommands.publisher) { command in
+                guard case let .focusPane(index) = command else { return }
                 guard index >= 0, index < layout.paneCount else { return }
                 focusedPaneIndex = index
             }
@@ -851,12 +861,12 @@ private struct PaneFocusNotifications: ViewModifier {
 }
 
 private struct TabNotifications: ViewModifier {
+    let windowCommands: BrowserWindowCommands
     @ObservedObject var focusedPaneVM: PaneTabsViewModel
 
     func body(content: Content) -> some View {
         content
-            .onReceive(NotificationCenter.default.publisher(for: .mqdirCommand)) { note in
-                guard let command = AppCommand.from(note) else { return }
+            .onReceive(windowCommands.publisher) { command in
                 switch command {
                 case .newTab:
                     focusedPaneVM.newTab()
@@ -870,11 +880,6 @@ private struct TabNotifications: ViewModifier {
                     focusedPaneVM.prevTab()
                 case let .selectTab(index):
                     focusedPaneVM.selectTab(at: index)
-                // ⌘-click on a folder in tree/list view → new tab pointing at
-                // it. Always lands in the *focused* pane so the user gets the
-                // detail view next to their tree, not in some other pane.
-                case let .openURLInNewTab(url):
-                    focusedPaneVM.newTab(folderURL: url)
                 default:
                     break
                 }
