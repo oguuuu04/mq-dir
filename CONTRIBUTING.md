@@ -2,17 +2,12 @@
 
 Thanks for taking a look. mq-dir is a personal-use-first / open-source-second project. Contributions are welcome but the maintainer reserves the right to keep the scope tight — see the roadmap in [`README.md`](README.md) and the consensus plan in `/.omc/plans/ralplan-mq-dir-v1.md`.
 
-## DCO (Developer Certificate of Origin)
+## Contribution terms
 
-We use **DCO**, not a CLA. Every commit must include a `Signed-off-by:` line:
-
-```bash
-git commit -s -m "feat(panes): wire up Cmd+T to open tab in focused pane"
-```
-
-That single flag adds the line for you using your `user.name` and `user.email` from git config. By signing off, you're certifying the contents of [the DCO](https://developercertificate.org/) — basically: "I wrote this, or I have the right to submit it under the project's license."
-
-PRs without `Signed-off-by:` on every commit will be asked to amend.
+Contributions to this fork are submitted under the [MIT license](LICENSE).
+A Developer Certificate of Origin (DCO) sign-off is optional for commits
+submitted here. Follow the upstream project's DCO requirements when
+submitting a change to h5nam/mq-dir.
 
 ## Branching & PRs
 
@@ -36,7 +31,7 @@ Tests only:
 swift test
 ```
 
-The generated Xcode project builds the app and runs isolated AppKit/Markdown service tests in CI on `macos-14`. These tests do not launch the production app or read your saved workspace.
+The generated Xcode project builds the app and runs isolated AppKit/Markdown service tests in CI on `macos-26`. These tests do not launch the production app or read your saved workspace.
 
 ### First launch with an unsigned local build
 

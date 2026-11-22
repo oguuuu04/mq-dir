@@ -66,4 +66,4 @@ Cloud sync, file editing, plugins, iPadOS/iOS port, localization beyond English.
 
 ## Contributing
 
-PRs welcome. Contributions are accepted via [DCO](https://developercertificate.org/) — every commit needs a `Signed-off-by:` line. **No CLA.** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow, [`SECURITY.md`](SECURITY.md) for vulnerability disclosure, and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+PRs welcome. This fork accepts contributions under the [MIT license](LICENSE) and makes DCO sign-off optional. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, [SECURITY.md](SECURITY.md) for vulnerability disclosure, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
