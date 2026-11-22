@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   verify:
+    if: github.repository == 'h5nam/mq-dir'
     name: Verify exact release commit
     runs-on: macos-14
     env:

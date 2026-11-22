@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   nightly:
+    if: github.repository == 'h5nam/mq-dir'
     name: Ad-hoc signed nightly
     runs-on: macos-14
     env:

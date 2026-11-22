@@ -4,26 +4,16 @@ import Foundation
 /// Drives the small repo-link capsule that appears in the sidebar
 /// footer.
 ///
-/// Mirrors `UpdateManager`'s "quiet flag → sidebar pill" pattern: a
-/// single `@Published var shouldShowPill` flips on once a small set of
-/// usage gates are satisfied, and the sidebar renders a capsule whose
-/// click opens the repo URL in the user's browser. Gating state lives
-/// entirely in `UserDefaults` — nothing leaves the device, consistent
-/// with the v1 zero-telemetry stance.
+/// Usage gates are stored in local UserDefaults.
 @MainActor
 final class RepoCalloutController: ObservableObject {
     /// True when the active capsule should be rendered. Recomputed on
     /// every launch and after each user interaction.
     @Published private(set) var shouldShowPill: Bool = false
 
-    /// Mirrors `hasOpenedRepo` so dependent surfaces (e.g. the Feedback
-    /// success view) can hide their own redundant CTA. Kept @Published
-    /// so subscribers rebuild when the flag flips during the session.
-    @Published private(set) var hasOpenedRepo: Bool = false
-
     private let defaults: UserDefaults
     private let now: () -> Date
-    private let repoURL = URL(string: "https://github.com/h5nam/mq-dir")!
+    private let repoURL = URL(string: "https://github.com/oguuuu04/mq-dir")!
 
     /// Once the capsule has been surfaced this session, subsequent
     /// `evaluateCallout()` calls (e.g. after a user action) skip the
@@ -52,7 +42,6 @@ final class RepoCalloutController: ObservableObject {
     init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
         self.defaults = defaults
         self.now = now
-        self.hasOpenedRepo = defaults.bool(forKey: Key.hasOpenedRepo)
     }
 
     /// Called once at app startup. Seeds the first-launch date on the
@@ -79,7 +68,6 @@ final class RepoCalloutController: ObservableObject {
         NSWorkspace.shared.open(repoURL)
         defaults.set(true, forKey: Key.hasOpenedRepo)
         defaults.set(now(), forKey: Key.lastCalloutAt)
-        hasOpenedRepo = true
         evaluateCallout()
     }
 
