@@ -11,7 +11,15 @@ final class TabDropSafetyTests: XCTestCase {
         try FileManager.default.createDirectory(at: origin, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let tab = DragDropSupport.tabProvider(token: UUID(), folderURL: origin)
+        let item = try XCTUnwrap(DragDropSupport.tabPasteboardItem(.init(token: UUID(), folderURL: origin)))
+        let type = DragDropSupport.tabTypeIdentifier
+        XCTAssertEqual(item.types.map(\.rawValue), [type])
+        let data = try XCTUnwrap(item.data(forType: .init(type)))
+        let tab = NSItemProvider()
+        tab.registerDataRepresentation(forTypeIdentifier: type, visibility: .ownProcess) { completion in
+            completion(data, nil)
+            return nil
+        }
         XCTAssertFalse(tab.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier))
         XCTAssertFalse(tab.hasItemConformingToTypeIdentifier(UTType.plainText.identifier))
 
@@ -55,26 +63,66 @@ final class TabDropSafetyTests: XCTestCase {
         let moved = source.tabs[2]
         let other = otherWindow.activeTab
 
-        _ = b.begin(sourcePaneIndex: 0, tabID: ObjectIdentifier(other), folderURL: nil)
-        let reorder = a.begin(sourcePaneIndex: 0, tabID: ObjectIdentifier(moved), folderURL: nil)
-        let firstPayload = await DragDropSupport.tabPayload(from: reorder)
-        let payload = try XCTUnwrap(firstPayload)
-        XCTAssertFalse(b.drop(payload, into: 0, at: 1))
+        let foreign = b.begin(sourcePaneIndex: 0, tabID: ObjectIdentifier(other), folderURL: nil)
+        let payload = a.begin(sourcePaneIndex: 0, tabID: ObjectIdentifier(moved), folderURL: nil)
+        let foreignRequest = try XCTUnwrap(b.requestDrop())
+        XCTAssertFalse(b.completeDrop(payload, expectedToken: foreignRequest, into: 0, at: 1))
+        b.end(token: foreign.token, operation: [])
+        XCTAssertNil(b.sourceTabID)
         XCTAssertEqual(otherWindow.tabs.count, 1)
         XCTAssertTrue(otherWindow.activeTab === other)
-        XCTAssertTrue(a.drop(payload, into: 0, at: 0))
+        let reorder = try XCTUnwrap(a.requestDrop())
+        XCTAssertTrue(a.completeDrop(payload, expectedToken: reorder, into: 0, at: 0))
+        XCTAssertNil(a.sourceTabID)
         XCTAssertTrue(source.tabs[0] === moved)
         XCTAssertTrue(source.tabs[1] === first)
         XCTAssertTrue(source.activeTab === active)
 
         let move = a.begin(sourcePaneIndex: 0, tabID: ObjectIdentifier(moved), folderURL: nil)
-        let secondPayload = await DragDropSupport.tabPayload(from: move)
-        let movePayload = try XCTUnwrap(secondPayload)
-        XCTAssertFalse(a.drop(payload, into: 1, at: 1))
-        XCTAssertTrue(a.drop(movePayload, into: 1, at: 1))
-        XCTAssertFalse(a.drop(movePayload, into: 1, at: 1))
+        let request = try XCTUnwrap(a.requestDrop())
+        a.end(token: move.token, operation: .move)
+        XCTAssertNil(a.sourceTabID)
+        XCTAssertTrue(a.completeDrop(move, expectedToken: request, into: 1, at: 1))
+        XCTAssertFalse(a.completeDrop(move, expectedToken: request, into: 1, at: 1))
         XCTAssertFalse(source.tabs.contains { $0 === moved })
         XCTAssertEqual(destination.tabs.count, 2)
         XCTAssertTrue(destination.activeTab === moved)
+    }
+
+    @MainActor
+    func testCancelledOrRejectedDragClearsStateAndCannotMoveTab() throws {
+        let pane = PaneTabsViewModel(state: .init())
+        let coordinator = TabDragCoordinator()
+        coordinator.register(panes: [pane])
+        let tab = ObjectIdentifier(pane.activeTab)
+
+        let cancelled = coordinator.begin(sourcePaneIndex: 0, tabID: tab, folderURL: nil)
+        coordinator.end(token: cancelled.token, operation: [])
+        XCTAssertNil(coordinator.sourceTabID)
+        XCTAssertNil(coordinator.requestDrop())
+
+        let rejected = coordinator.begin(sourcePaneIndex: 0, tabID: tab, folderURL: nil)
+        let request = try XCTUnwrap(coordinator.requestDrop())
+        coordinator.end(token: rejected.token, operation: [])
+        XCTAssertNil(coordinator.sourceTabID)
+        XCTAssertFalse(coordinator.completeDrop(rejected, expectedToken: request, into: 0, at: 1))
+        XCTAssertEqual(pane.tabs.map(ObjectIdentifier.init), [tab])
+    }
+
+    @MainActor
+    func testEndingOldDragDoesNotClearNewDragOrAllowItsPendingDrop() throws {
+        let pane = PaneTabsViewModel(state: .init())
+        let coordinator = TabDragCoordinator()
+        coordinator.register(panes: [pane])
+        let tab = ObjectIdentifier(pane.activeTab)
+        let first = coordinator.begin(sourcePaneIndex: 0, tabID: tab, folderURL: nil)
+        let oldRequest = try XCTUnwrap(coordinator.requestDrop())
+        let second = coordinator.begin(sourcePaneIndex: 0, tabID: tab, folderURL: nil)
+        coordinator.end(token: first.token, operation: .move)
+        XCTAssertEqual(coordinator.sourceTabID, tab)
+        XCTAssertFalse(coordinator.completeDrop(first, expectedToken: oldRequest, into: 0, at: 1))
+        XCTAssertEqual(coordinator.requestDrop(), second.token)
+        coordinator.end(token: second.token, operation: [])
+        XCTAssertNil(coordinator.sourceTabID)
     }
 }

@@ -21,14 +21,11 @@ enum DragDropSupport {
         let folderURL: URL?
     }
 
-    static func tabProvider(token: UUID, folderURL: URL?) -> NSItemProvider {
-        let provider = NSItemProvider()
-        let data = try? JSONEncoder().encode(TabPayload(token: token, folderURL: folderURL))
-        provider.registerDataRepresentation(forTypeIdentifier: tabTypeIdentifier, visibility: .ownProcess) { completion in
-            completion(data, nil)
-            return nil
-        }
-        return provider
+    static func tabPasteboardItem(_ payload: TabPayload) -> NSPasteboardItem? {
+        let item = NSPasteboardItem()
+        guard let data = try? JSONEncoder().encode(payload),
+              item.setData(data, forType: .init(tabTypeIdentifier)) else { return nil }
+        return item
     }
 
     static func tabPayload(from provider: NSItemProvider) async -> TabPayload? {

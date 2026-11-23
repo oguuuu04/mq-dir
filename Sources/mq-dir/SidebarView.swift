@@ -19,7 +19,6 @@ struct SidebarView: View {
     let windowID: UUID
     let projectID: UUID
     let beforeProjectChange: () -> Void
-    let tabDrag: TabDragCoordinator
     let onTagSelected: (String) -> Void
     let onSelect: (URL) -> Void
     let onOpenInNewTab: (URL) -> Void
@@ -673,11 +672,6 @@ struct SidebarView: View {
                             viewModel.move(sourceID: id, before: targetID)
                         }
                     }
-                    // No-op when the drop didn't originate from a tab;
-                    // when it did, clearing here flips
-                    // `BrowserPaneView`'s opacity overlay back on so
-                    // the source tab stops looking disabled.
-                    tabDrag.clear()
                 }
                 return
             }

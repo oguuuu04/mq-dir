@@ -152,7 +152,6 @@ struct MainWindowView: View {
                 windowID: windowID,
                 projectID: projectID,
                 beforeProjectChange: scheduleSave,
-                tabDrag: tabDrag,
                 onTagSelected: { tag in
                     // Dedicated tag filter: shows only current-folder entries
                     // whose `tagNames` contain this exact name — so a file
