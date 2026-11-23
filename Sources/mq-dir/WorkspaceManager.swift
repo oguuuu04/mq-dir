@@ -13,6 +13,11 @@ import Foundation
 final class WorkspaceManager: ObservableObject {
     @Published private(set) var workspace: WorkspaceState
     @Published var recoveryMessage: String?
+    let sidebar: SidebarViewModel
+    let initialWindowID: UUID
+
+    private var favoritesSubscription: AnyCancellable?
+    private var launchSessions: [UUID]?
 
     private let stateWriter: StateWriter?
     private var saveDebounceTask: Task<Void, Never>?
@@ -23,71 +28,108 @@ final class WorkspaceManager: ObservableObject {
 
     /// An explicit state and persistence URL keep service tests off user data.
     init(persistence service: PersistenceService?, initialState: WorkspaceState? = nil) {
-        self.stateWriter = service.map { persistence in StateWriter { try persistence.saveState($0) } }
-
         // Load → migrate → seed favorites if needed. WorkspaceState's
         // decoder handles legacy state.json shapes; the seeding pass
         // below populates the six home subdirs the very first time.
         var recoveryMessage: String?
         var loaded = initialState ?? service?.loadState(onRecovery: { recoveryMessage = $0 }) ?? .empty
+        var writableService = service
+        if loaded.windowSessions == nil, let service {
+            do { try service.backUpBeforeWindowSessionMigration() }
+            catch {
+                writableService = nil
+                StateWriter.log(error)
+                recoveryMessage = "The workspace could not be backed up for migration. Changes will not be saved during this launch."
+            }
+        }
+        self.stateWriter = writableService.map { persistence in StateWriter { try persistence.saveState($0) } }
         self.recoveryMessage = recoveryMessage
         if !loaded.favoritesSeeded {
-            loaded.favorites = SidebarViewModel.defaultSeed()
+            if loaded.favorites.isEmpty { loaded.favorites = SidebarViewModel.defaultSeed() }
             loaded.favoritesSeeded = true
         }
         self.workspace = loaded
-    }
-
-    // MARK: Active project
-
-    var activeProject: Project {
-        workspace.projects.first(where: { $0.id == workspace.activeProjectID })
-            ?? workspace.projects[0]
-    }
-
-    /// A delayed snapshot always belongs to its original project, even if
-    /// another project has become active before the callback is delivered.
-    func updateProject(id: UUID, _ body: (inout Project) -> Void) {
-        guard let idx = workspace.projects.firstIndex(where: { $0.id == id })
-        else { return }
-        mutate { state in
-            var project = state.projects[idx]
-            body(&project)
-            state.projects[idx] = project
+        self.sidebar = SidebarViewModel(favorites: loaded.favorites)
+        self.launchSessions = loaded.windowSessions?.map(\.id)
+        self.initialWindowID = loaded.windowSessions?.first?.id ?? UUID()
+        favoritesSubscription = sidebar.$favorites.dropFirst().sink { [weak self] favorites in
+            self?.mutate { $0.favorites = favorites }
         }
     }
 
-    func switchTo(projectID: UUID) {
-        guard projectID != workspace.activeProjectID,
+    // MARK: Window sessions
+
+    func takeRestorationIDs(excluding current: UUID) -> [UUID] {
+        let ids = launchSessions ?? []
+        launchSessions = nil
+        return ids.filter { $0 != current && session($0) != nil }
+    }
+
+    func session(_ id: UUID) -> WindowSession? {
+        workspace.windowSessions?.first { $0.id == id }
+    }
+
+    @discardableResult
+    func attachWindow(_ id: UUID) -> UUID {
+        guard session(id) == nil else { return id }
+        let migrating = workspace.windowSessions == nil
+        let session = WindowSession(
+            id: id,
+            projectID: workspace.activeProjectID,
+            snapshots: migrating
+                ? Dictionary(workspace.projects.map { ($0.id.uuidString, $0.state) }, uniquingKeysWith: { first, _ in first })
+                : [:]
+        )
+        mutate { $0.windowSessions = ($0.windowSessions ?? []) + [session] }
+        return id
+    }
+
+    func closeWindow(_ id: UUID) {
+        guard session(id) != nil else { return }
+        mutate { $0.windowSessions?.removeAll { $0.id == id } }
+        saveSynchronously()
+    }
+
+    func snapshot(windowID: UUID, projectID: UUID) -> WindowState {
+        session(windowID)?.snapshots[projectID.uuidString]
+            ?? workspace.projects.first { $0.id == projectID }?.state
+            ?? .empty
+    }
+
+    func saveSnapshot(_ snapshot: WindowState, windowID: UUID, projectID: UUID) {
+        guard workspace.projects.contains(where: { $0.id == projectID }),
+              let index = workspace.windowSessions?.firstIndex(where: { $0.id == windowID }),
+              workspace.windowSessions?[index].snapshots[projectID.uuidString] != snapshot
+        else { return }
+        mutate { $0.windowSessions?[index].snapshots[projectID.uuidString] = snapshot }
+    }
+
+    func switchTo(projectID: UUID, in windowID: UUID) {
+        guard let index = workspace.windowSessions?.firstIndex(where: { $0.id == windowID }),
+              workspace.windowSessions?[index].projectID != projectID,
               workspace.projects.contains(where: { $0.id == projectID })
         else { return }
-        mutate { $0.activeProjectID = projectID }
+        mutate { $0.windowSessions?[index].projectID = projectID }
     }
 
     // MARK: Project CRUD
 
-    /// Append a new empty project, activate it, and trigger a save.
-    /// Naming uses the next free integer so users get a predictable
-    /// "Project 2" / "Project 3" sequence without a modal prompt.
-    func createProject() {
+    func createProject(in windowID: UUID) {
         let project = Project(name: nextProjectName())
-        mutate { state in
-            state.projects.append(project)
-            state.activeProjectID = project.id
-        }
+        mutate { $0.projects.append(project) }
+        switchTo(projectID: project.id, in: windowID)
     }
 
-    func duplicateProject(_ id: UUID) {
+    func duplicateProject(_ id: UUID, in windowID: UUID) {
         guard let original = workspace.projects.first(where: { $0.id == id }) else { return }
         let names = Set(workspace.projects.map(\.name))
         var name = original.name + " Copy"
         var suffix = 2
         while names.contains(name) { name = original.name + " Copy \(suffix)"; suffix += 1 }
-        let duplicate = Project(name: name, state: original.state)
-        mutate {
-            $0.projects.append(duplicate)
-            $0.activeProjectID = duplicate.id
-        }
+        let copy = snapshot(windowID: windowID, projectID: id)
+        let duplicate = Project(name: name, state: copy)
+        mutate { $0.projects.append(duplicate) }
+        switchTo(projectID: duplicate.id, in: windowID)
     }
 
     func rename(_ projectID: UUID, to newName: String) {
@@ -105,13 +147,15 @@ final class WorkspaceManager: ObservableObject {
         guard workspace.projects.count > 1,
               let idx = workspace.projects.firstIndex(where: { $0.id == projectID })
         else { return }
-        let wasActive = workspace.projects[idx].id == workspace.activeProjectID
         mutate { state in
             state.projects.remove(at: idx)
-            if wasActive {
-                // Snap to the same slot, or back one if we removed the tail.
-                let nextIdx = min(idx, state.projects.count - 1)
-                state.activeProjectID = state.projects[nextIdx].id
+            let fallback = state.projects[min(idx, state.projects.count - 1)].id
+            if state.activeProjectID == projectID { state.activeProjectID = fallback }
+            state.windowSessions = state.windowSessions?.map { session in
+                var updated = session
+                updated.snapshots.removeValue(forKey: projectID.uuidString)
+                if updated.projectID == projectID { updated.projectID = fallback }
+                return updated
             }
         }
     }
@@ -132,12 +176,6 @@ final class WorkspaceManager: ObservableObject {
         if insertAt == from { return }
         copy.insert(item, at: insertAt)
         mutate { $0.projects = copy }
-    }
-
-    // MARK: Favorites passthrough
-
-    func setFavorites(_ favorites: [Favorite]) {
-        mutate { $0.favorites = favorites }
     }
 
     // MARK: Settings passthrough
@@ -225,7 +263,11 @@ final class WorkspaceManager: ObservableObject {
             catch { return }
             guard !Task.isCancelled, let self else { return }
             // Enqueue synchronously on the main actor, preserving mutation order.
-            stateWriter.enqueue(self.workspace)
+            stateWriter.enqueue(self.workspace) { [weak self] message in
+                Task { @MainActor in
+                    self?.recoveryMessage = "The workspace could not be saved: " + message
+                }
+            }
         }
     }
 
@@ -233,7 +275,10 @@ final class WorkspaceManager: ObservableObject {
     func saveSynchronously() {
         saveDebounceTask?.cancel()
         do { try stateWriter?.flush(workspace) }
-        catch { StateWriter.log(error) }
+        catch {
+            StateWriter.log(error)
+            recoveryMessage = "The workspace could not be saved: " + error.localizedDescription
+        }
     }
 
     // MARK: Helpers

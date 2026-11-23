@@ -44,7 +44,10 @@ struct MenuCommands: Commands {
             .keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .newItem) {
-            Button("New Window") { openWindow(id: "browser") }
+            Button("New Window") {
+                let id = workspace.attachWindow(UUID())
+                openWindow(id: "browser", value: id)
+            }
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Tab") { post(.newTab) }
                 .keyboardShortcut(binding(.newTab))

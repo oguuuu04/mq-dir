@@ -1,66 +1,103 @@
-import Foundation
+import AppKit
+import Combine
 
-/// Cross-pane tab drag bookkeeping.
-///
-/// Tab reorder lives in `TabReorderDropDelegate` but had no way to learn
-/// which pane the dragged chip came from — a per-pane `@State` binding
-/// only sees same-pane drags. This singleton remembers (sourcePane,
-/// tabID) for the duration of a drag so a drop on a different pane can
-/// detach the tab from its origin and attach it to the destination.
-///
-/// Lifetime: a `MainWindowView` instance registers the four pane VMs on
-/// init via `register(panes:)`. A project switch tears down the
-/// `MainWindowView` (`.id(activeProjectID)` keys its identity) and the
-/// next instance re-registers, so the coordinator's pane references
-/// always match the live panes for the active project.
+/// Tracks tab reordering between the live panes of one browser window.
 @MainActor
 final class TabDragCoordinator: ObservableObject {
-    static let shared = TabDragCoordinator()
+    private struct Drag {
+        let token: UUID
+        let paneIndex: Int
+        let tabID: ObjectIdentifier
+    }
 
-    private var allPanes: [PaneTabsViewModel] = []
-    /// Published so each `BrowserPaneView` can observe the
-    /// drag-in-flight state and clear its insertion-marker preview the
-    /// instant the drag ends. The `setPreview`-via-Binding path inside
-    /// the drop delegate isn't always enough — SwiftUI sometimes
-    /// processes a sibling drop zone's dropEntered AFTER performDrop
-    /// returns, re-setting the preview. Observing this gives every
-    /// pane a single source-of-truth signal.
-    @Published private(set) var sourcePaneIndex: Int?
+    private var panes: [PaneTabsViewModel] = []
+    private var active: Drag?
+    private var requestedDrop: UUID?
+    // AppKit may end an accepted drag before the drop provider calls back.
+    // Keep only that in-flight drop's data, separate from visible drag state.
+    private var pendingDrop: Drag?
     @Published private(set) var sourceTabID: ObjectIdentifier?
 
-    private init() {}
-
     func register(panes: [PaneTabsViewModel]) {
-        self.allPanes = panes
+        self.panes = panes
     }
 
-    func begin(sourcePaneIndex: Int, tabID: ObjectIdentifier) {
-        self.sourcePaneIndex = sourcePaneIndex
-        self.sourceTabID = tabID
+    func begin(sourcePaneIndex: Int, tabID: ObjectIdentifier, folderURL: URL?) -> DragDropSupport.TabPayload {
+        let token = UUID()
+        pendingDrop = nil
+        requestedDrop = nil
+        active = Drag(token: token, paneIndex: sourcePaneIndex, tabID: tabID)
+        sourceTabID = tabID
+        return .init(token: token, folderURL: folderURL)
     }
 
-    func clear() {
-        sourcePaneIndex = nil
+    func requestDrop() -> UUID? {
+        guard let active, requestedDrop == nil else { return nil }
+        requestedDrop = active.token
+        return active.token
+    }
+
+    func end(token: UUID, operation: NSDragOperation) {
+        guard let drag = active, drag.token == token else { return }
+        if !operation.isEmpty, requestedDrop == token { pendingDrop = drag }
+        active = nil
+        requestedDrop = nil
         sourceTabID = nil
     }
 
-    /// Detach the dragging tab from its source pane and insert it into
-    /// `targetPaneIndex` at `tabIndex`. Returns true on success. Updates
-    /// `sourcePaneIndex` to the destination so a subsequent reorder
-    /// inside the destination pane works correctly during the same
-    /// drag session.
     @discardableResult
-    func moveTab(toPaneIndex targetPaneIndex: Int, atTabIndex tabIndex: Int) -> Bool {
-        guard let source = sourcePaneIndex,
-              let tabID = sourceTabID,
-              source != targetPaneIndex,
-              allPanes.indices.contains(source),
-              allPanes.indices.contains(targetPaneIndex)
+    func completeDrop(
+        _ payload: DragDropSupport.TabPayload?, expectedToken: UUID,
+        into targetPaneIndex: Int, at tabIndex: Int
+    ) -> Bool {
+        let drag: Drag
+        if let active, active.token == expectedToken, requestedDrop == expectedToken {
+            drag = active
+            end(token: expectedToken, operation: [])
+        } else if let pendingDrop, pendingDrop.token == expectedToken {
+            drag = pendingDrop
+            self.pendingDrop = nil
+        } else {
+            return false
+        }
+
+        guard payload?.token == expectedToken,
+              panes.indices.contains(drag.paneIndex), panes.indices.contains(targetPaneIndex)
         else { return false }
 
-        guard let detached = allPanes[source].detachTab(id: tabID) else { return false }
-        allPanes[targetPaneIndex].attachTab(detached, at: tabIndex)
-        sourcePaneIndex = targetPaneIndex
+        let origin = panes[drag.paneIndex]
+        if drag.paneIndex == targetPaneIndex {
+            guard let from = origin.tabs.firstIndex(where: { ObjectIdentifier($0) == drag.tabID }) else { return false }
+            origin.move(from: from, to: tabIndex)
+        } else {
+            guard let detached = origin.detachTab(id: drag.tabID) else { return false }
+            panes[targetPaneIndex].attachTab(detached, at: tabIndex)
+        }
         return true
+    }
+}
+
+/// Owns the AppKit source callback for the lifetime of each native drag.
+@MainActor
+final class AppKitTabDragSource: NSObject, NSDraggingSource {
+    static let shared = AppKitTabDragSource()
+    private var completions: [Int: (NSDragOperation) -> Void] = [:]
+
+    func start(
+        on view: NSView, event: NSEvent, item: NSDraggingItem,
+        completion: @escaping (NSDragOperation) -> Void
+    ) {
+        let session = view.beginDraggingSession(with: [item], event: event, source: self)
+        completions[session.draggingSequenceNumber] = completion
+    }
+
+    nonisolated func draggingSession(
+        _ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        context == .withinApplication ? [.move, .copy] : []
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        completions.removeValue(forKey: session.draggingSequenceNumber)?(operation)
     }
 }

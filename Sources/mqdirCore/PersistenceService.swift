@@ -328,10 +328,7 @@ struct WindowState: Codable, Equatable, Sendable {
     }
 }
 
-/// One named workspace. Carries a `WindowState` that fully describes the
-/// pane/tab arrangement when this project is active. Switching projects
-/// snapshots the outgoing project's `state` and applies the incoming
-/// project's `state` to fresh pane VMs.
+/// Shared workspace definition. State is retained as a template and for legacy files.
 struct Project: Codable, Equatable, Sendable, Identifiable {
     var id: UUID
     var name: String
@@ -451,6 +448,41 @@ private struct AnyCodingKey: CodingKey {
     init(stringValue: String) { self.stringValue = stringValue }
 }
 
+/// Open window with independent snapshots for each visited workspace.
+struct WindowSession: Codable, Equatable, Sendable, Identifiable {
+    let id: UUID
+    var projectID: UUID
+    var snapshots: [String: WindowState]
+
+    init(id: UUID, projectID: UUID, snapshots: [String: WindowState] = [:]) {
+        self.id = id
+        self.projectID = projectID
+        self.snapshots = snapshots
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, projectID, snapshots }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try c.decode(UUID.self, forKey: .id)
+        let projectID = try c.decode(UUID.self, forKey: .projectID)
+        var snapshots: [String: WindowState] = [:]
+        if let records = try? c.nestedContainer(keyedBy: AnyCodingKey.self, forKey: .snapshots) {
+            for key in records.allKeys {
+                if let project = UUID(uuidString: key.stringValue),
+                   let state = try? records.decode(WindowState.self, forKey: key) {
+                    snapshots[project.uuidString] = state
+                } else {
+                    StateDecodingRecovery.record(in: decoder)
+                }
+            }
+        } else if c.contains(.snapshots) {
+            StateDecodingRecovery.record(in: decoder)
+        }
+        self.init(id: id, projectID: projectID, snapshots: snapshots)
+    }
+}
+
 /// Top-level persisted state. Holds cross-project surface (favorites)
 /// alongside the project list and which one is active. Old `state.json`
 /// files from before this struct existed get migrated by the custom
@@ -465,13 +497,16 @@ struct WorkspaceState: Codable, Equatable, Sendable {
     var activeProjectID: UUID
     var projects: [Project]
     var settings: WorkspaceSettings
+    /// nil identifies a pre-session file. An empty array means all windows were closed.
+    var windowSessions: [WindowSession]?
 
     init(
         favorites: [Favorite] = [],
         favoritesSeeded: Bool = false,
         activeProjectID: UUID,
         projects: [Project],
-        settings: WorkspaceSettings = WorkspaceSettings()
+        settings: WorkspaceSettings = WorkspaceSettings(),
+        windowSessions: [WindowSession]? = nil
     ) {
         precondition(!projects.isEmpty, "WorkspaceState always carries at least one project")
         self.favorites = favorites
@@ -479,10 +514,11 @@ struct WorkspaceState: Codable, Equatable, Sendable {
         self.activeProjectID = activeProjectID
         self.projects = projects
         self.settings = settings
+        self.windowSessions = windowSessions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case favorites, favoritesSeeded, activeProjectID, projects, settings
+        case favorites, favoritesSeeded, activeProjectID, projects, settings, windowSessions
         // Legacy keys (pre-projects schema)
         case layout, focusedPaneIndex, panes
     }
@@ -502,12 +538,31 @@ struct WorkspaceState: Codable, Equatable, Sendable {
             // Tolerate dangling activeProjectID — fall back to the first
             // project so a corrupt write can't lock the user out.
             let resolved = projects.contains(where: { $0.id == active }) ? active : projects.first!.id
+            let projectIDs = Set(projects.map(\.id))
+            let sessions = c.decodeArraySkippingInvalid(WindowSession.self, forKey: .windowSessions)
+            var seen: Set<UUID> = []
+            let repaired = sessions?.compactMap { session -> WindowSession? in
+                guard seen.insert(session.id).inserted else {
+                    StateDecodingRecovery.record(in: decoder)
+                    return nil
+                }
+                var result = session
+                if !projectIDs.contains(result.projectID) {
+                    result.projectID = resolved
+                    StateDecodingRecovery.record(in: decoder)
+                }
+                result.snapshots = result.snapshots.filter { key, _ in
+                    UUID(uuidString: key).map(projectIDs.contains) ?? false
+                }
+                return result
+            }
             self.init(
                 favorites: c.decodeArraySkippingInvalid(Favorite.self, forKey: .favorites) ?? [],
                 favoritesSeeded: c.decode(Bool.self, forKey: .favoritesSeeded, default: false),
                 activeProjectID: resolved,
                 projects: projects,
-                settings: c.decode(WorkspaceSettings.self, forKey: .settings, default: WorkspaceSettings())
+                settings: c.decode(WorkspaceSettings.self, forKey: .settings, default: WorkspaceSettings()),
+                windowSessions: repaired ?? (c.contains(.windowSessions) ? [] : nil)
             )
             return
         }
@@ -526,7 +581,8 @@ struct WorkspaceState: Codable, Equatable, Sendable {
             favorites: favorites,
             favoritesSeeded: seeded,
             activeProjectID: migrated.id,
-            projects: [migrated]
+            projects: [migrated],
+            settings: c.decode(WorkspaceSettings.self, forKey: .settings, default: WorkspaceSettings())
         )
     }
 
@@ -537,6 +593,7 @@ struct WorkspaceState: Codable, Equatable, Sendable {
         try c.encode(activeProjectID, forKey: .activeProjectID)
         try c.encode(projects, forKey: .projects)
         try c.encode(settings, forKey: .settings)
+        try c.encodeIfPresent(windowSessions, forKey: .windowSessions)
     }
 
     static var empty: WorkspaceState {
@@ -617,7 +674,7 @@ struct PersistenceService: @unchecked Sendable {
             let state = try decoder.decode(WorkspaceState.self, from: data)
             if recovery.repaired {
                 let backedUp = backUpCorruptStateFile()
-                onRecovery?("Some saved panes or tabs were damaged. Your other folders and tabs were restored. "
+                onRecovery?("Some saved windows, panes, or tabs were damaged. Valid records were restored. "
                     + (backedUp ? "A copy of the original state was saved for recovery."
                        : "The original state could not be backed up."))
             }
@@ -629,6 +686,16 @@ struct PersistenceService: @unchecked Sendable {
                    : "The original state could not be backed up. The app will open a new workspace."))
             return nil
         }
+    }
+
+    /// Keep the exact pre-migration file before the first session-aware write.
+    func backUpBeforeWindowSessionMigration() throws {
+        guard fileManager.fileExists(atPath: stateURL.path) else { return }
+        let backup = stateURL.deletingLastPathComponent()
+            .appendingPathComponent("state.before-window-sessions.json")
+        guard !fileManager.fileExists(atPath: backup.path) else { return }
+        try fileManager.copyItem(at: stateURL, to: backup)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
     }
 
     /// Preserve the source before a recovered/default state replaces it.
@@ -695,11 +762,16 @@ struct PersistenceService: @unchecked Sendable {
     /// Creates a security-scoped bookmark for an existing folder URL.
     /// The caller stores the returned `Data` in `PaneState.folderBookmark`.
     static func makeBookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        #if MQDIR_SANDBOXED
+        return try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        #else
+        // An unsigned development build may be unable to create a scoped
+        // bookmark. A plain bookmark still restores folders in this build.
+        if let scoped = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            return scoped
+        }
+        return try url.bookmarkData()
+        #endif
     }
 
     /// Resolves a previously-saved bookmark back to its URL.
@@ -709,11 +781,18 @@ struct PersistenceService: @unchecked Sendable {
     /// caller can refresh on next openFolder rather than losing the entry.
     static func resolveBookmark(_ data: Data) -> URL? {
         var isStale = false
-        return try? URL(
+        let resolved = try? URL(
             resolvingBookmarkData: data,
-            options: [.withSecurityScope],
+            options: [.withSecurityScope, .withoutUI],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )
+        #if MQDIR_SANDBOXED
+        return resolved
+        #else
+        if let resolved { return resolved }
+        return try? URL(resolvingBookmarkData: data, options: [.withoutUI],
+                        relativeTo: nil, bookmarkDataIsStale: &isStale)
+        #endif
     }
 }

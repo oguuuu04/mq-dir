@@ -44,6 +44,11 @@ targets:
         LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.oguuuu04.filemanager.browser-tab
+            UTTypeDescription: File Manager Browser Tab
+            UTTypeConformsTo:
+              - public.data
         NSDesktopFolderUsageDescription: File Manager needs access to your Desktop to browse files there.
         NSDocumentsFolderUsageDescription: File Manager needs access to your Documents to browse files there.
         NSDownloadsFolderUsageDescription: File Manager needs access to your Downloads to browse files there.
@@ -76,6 +81,9 @@ targets:
     sources:
       - path: Tests/mqdirAppTests
       - path: Sources/mq-dir/PasteboardFiles.swift
+      - path: Sources/mq-dir/DragDropSupport.swift
+      - path: Sources/mq-dir/PaneTabsViewModel.swift
+      - path: Sources/mq-dir/TabDragCoordinator.swift
       - path: Sources/mq-dir/PersistedChanges.swift
       - path: Sources/mq-dir/WorkspaceManager.swift
       - path: Sources/mq-dir/SidebarViewModel.swift

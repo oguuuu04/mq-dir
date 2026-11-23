@@ -36,5 +36,18 @@
 	<string>File Manager needs access to your network volumes to browse files there.</string>
 	<key>NSRemovableVolumesUsageDescription</key>
 	<string>File Manager needs access to your removable volumes to browse files there.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>File Manager Browser Tab</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.oguuuu04.filemanager.browser-tab</string>
+		</dict>
+	</array>
 </dict>
 </plist>

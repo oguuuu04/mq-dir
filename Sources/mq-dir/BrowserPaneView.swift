@@ -2,36 +2,29 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Routes a tab drop to `paneVM.move`. The drop "happens" when the user
-/// hovers over a target tab (`dropEntered`) — that gives the immediate
-/// drag-to-reorder feel like Safari, instead of waiting for `performDrop`
-/// which only fires on mouseUp. `performDrop` returns true so SwiftUI
-/// considers the drop accepted and clears the drag state.
-/// Chrome-style tab drop delegate.
-///
-/// Hover over a tab → an insertion-line indicator appears (blue 2pt
-/// vertical bar) and the cursor's horizontal position decides whether
-/// the line snaps to the leading or trailing edge of the hovered chip.
-/// The actual reorder doesn't run until `performDrop`, so the bar
-/// doesn't shuffle around as the user drags — it only moves the once,
-/// where the user told it to land. Cross-pane drops decode the source
-/// pane via `TabDragCoordinator` and detach + attach in one step.
+/// Inserts the dragged tab at the drop position within this window.
 private struct TabReorderDropDelegate: DropDelegate {
-    let paneVM: PaneTabsViewModel
     let paneIndex: Int
+    let coord: TabDragCoordinator
     /// Insertion index this delegate represents, computed from hover
     /// position. For per-tab delegates we resolve leading vs trailing
     /// half via the chip width snapshot. For the trailing zone after
     /// the last tab we just hardcode `tabs.count`.
     let resolveInsertionIndex: (DropInfo) -> Int
     @Binding var insertionPreview: Int?
-    @Binding var draggingID: ObjectIdentifier?
 
+    @MainActor
     func dropEntered(info: DropInfo) {
+        guard coord.sourceTabID != nil else { return }
         insertionPreview = resolveInsertionIndex(info)
     }
 
+    @MainActor
+    func validateDrop(info: DropInfo) -> Bool { coord.sourceTabID != nil }
+
+    @MainActor
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard coord.sourceTabID != nil else { return DropProposal(operation: .forbidden) }
         let next = resolveInsertionIndex(info)
         if insertionPreview != next { insertionPreview = next }
         return DropProposal(operation: .move)
@@ -43,31 +36,15 @@ private struct TabReorderDropDelegate: DropDelegate {
 
     @MainActor
     func performDrop(info: DropInfo) -> Bool {
-        let coord = TabDragCoordinator.shared
-        let insertionIndex = resolveInsertionIndex(info)
-        let sourceTabID = coord.sourceTabID
-        let sourcePaneIdx = coord.sourcePaneIndex
-
-        // Clear the visual preview FIRST so the blue insertion bar
-        // disappears the instant the user lets go, even if the move
-        // logic short-circuits below.
         insertionPreview = nil
-        draggingID = nil
-        coord.clear()
-
-        guard let sourceTabID, let sourcePaneIdx else { return false }
-
-        if sourcePaneIdx == paneIndex {
-            guard let from = paneVM.tabs.firstIndex(where: { ObjectIdentifier($0) == sourceTabID })
-            else { return false }
-            paneVM.move(from: from, to: insertionIndex)
-        } else {
-            // moveTab needs the coord state, but we already cleared it.
-            // Re-arm with the cached values just for this call, then
-            // clear again so any subsequent stale event sees no source.
-            coord.begin(sourcePaneIndex: sourcePaneIdx, tabID: sourceTabID)
-            coord.moveTab(toPaneIndex: paneIndex, atTabIndex: insertionIndex)
-            coord.clear()
+        guard let provider = info.itemProviders(for: [DragDropSupport.tabTypeIdentifier]).first,
+              let token = coord.requestDrop()
+        else { return false }
+        let insertionIndex = resolveInsertionIndex(info)
+        DragDropSupport.loadTabPayload(from: provider) { payload in
+            Task { @MainActor in
+                coord.completeDrop(payload, expectedToken: token, into: paneIndex, at: insertionIndex)
+            }
         }
         return true
     }
@@ -108,12 +85,8 @@ struct BrowserPaneView: View {
     /// insertion-marker preview the moment any drop completes — a
     /// belt-and-suspenders against SwiftUI processing a sibling drop
     /// zone's dropEntered AFTER our performDrop returns.
-    @ObservedObject private var tabDragCoordinator = TabDragCoordinator.shared
+    @ObservedObject var tabDragCoordinator: TabDragCoordinator
 
-    /// Tab being dragged for in-pane reorder. Carries the source tab's
-    /// identity so the drop target can resolve the right index even after
-    /// SwiftUI re-renders the row layout mid-drag.
-    @State private var draggingTabID: ObjectIdentifier?
     /// Bridges this pane's "active for keyboard input" state into SwiftUI's
     /// focus chain so `.onKeyPress` on the file list actually fires. Tracks
     /// `isFocused` — clicking another pane updates `focusedPaneIndex`
@@ -148,18 +121,29 @@ struct BrowserPaneView: View {
         .contentShape(Rectangle())
         .onTapGesture { onFocus() }
         .onChange(of: tabDragCoordinator.sourceTabID) { _, new in
-            // Drag finished (drop or cancel) → wipe any leftover
-            // insertion marker AND restore the dragged tab's opacity.
-            // The `draggingTabID = nil` reset used to live only inside
-            // `TabReorderDropDelegate.performDrop`, so a drop landing
-            // on a non-tab target (e.g. Favorites in the sidebar)
-            // left the source tab stuck at 0.35 opacity. The
-            // coordinator's `sourceTabID` is now the single source of
-            // truth that every drop target clears via `clear()`.
-            if new == nil {
-                tabDropInsertionIndex = nil
-                draggingTabID = nil
-            }
+            if new == nil { tabDropInsertionIndex = nil }
+        }
+    }
+
+    private func startTabDrag(_ tab: FolderBrowserViewModel) {
+        guard tabDragCoordinator.sourceTabID == nil,
+              let event = NSApp.currentEvent, event.type == .leftMouseDragged,
+              let view = event.window?.contentView
+        else { return }
+
+        let coord = tabDragCoordinator
+        let payload = coord.begin(sourcePaneIndex: index, tabID: ObjectIdentifier(tab), folderURL: tab.folderURL)
+        guard let pasteboardItem = DragDropSupport.tabPasteboardItem(payload) else {
+            coord.end(token: payload.token, operation: [])
+            return
+        }
+
+        let item = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let point = view.convert(event.locationInWindow, from: nil)
+        let frame = NSRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24)
+        item.setDraggingFrame(frame, contents: NSImage(systemSymbolName: "folder", accessibilityDescription: nil))
+        AppKitTabDragSource.shared.start(on: view, event: event, item: item) { [weak coord] operation in
+            coord?.end(token: payload.token, operation: operation)
         }
     }
 
@@ -314,13 +298,12 @@ struct BrowserPaneView: View {
             .frame(width: 1, height: Theme.Metrics.tabBarHeight)
             .contentShape(Rectangle())
             .onDrop(
-                of: [UTType.plainText.identifier],
+                of: [DragDropSupport.tabTypeIdentifier],
                 delegate: TabReorderDropDelegate(
-                    paneVM: paneVM,
                     paneIndex: index,
+                    coord: tabDragCoordinator,
                     resolveInsertionIndex: { _ in paneVM.tabs.count },
-                    insertionPreview: $tabDropInsertionIndex,
-                    draggingID: $draggingTabID
+                    insertionPreview: $tabDropInsertionIndex
                 )
             )
     }
@@ -391,39 +374,11 @@ struct BrowserPaneView: View {
                 }
             }
         }
-        // Drag source: ship the tab id as `public.text` but with
-        // `.ownProcess` visibility so external destinations (cmux,
-        // terminals, text editors) don't see the drag at all and
-        // therefore can't paste the literal `ObjectIdentifier(0x…)`
-        // string. The actual reorder routing reads
-        // `TabDragCoordinator.shared` (which knows source pane +
-        // tab id) rather than the pasteboard payload — the string is
-        // only here to satisfy SwiftUI's drop-type matching.
-        //
-        // The tab's folder URL also rides along (same `.ownProcess`
-        // visibility) so dropping a tab onto the sidebar's Favorites
-        // section adds that folder — Favorites' existing drop handler
-        // already accepts `public.file-url`. Tab-reorder drop targets
-        // only match `plainText`, so the extra URL representation is
-        // a no-op for them.
-        .onDrag {
-            draggingTabID = id
-            TabDragCoordinator.shared.begin(sourcePaneIndex: index, tabID: id)
-            let provider = NSItemProvider()
-            provider.registerObject(
-                String(describing: id) as NSString,
-                visibility: .ownProcess
-            )
-            if let folderURL = tab.folderURL {
-                // Default `.all` visibility so external destinations
-                // (Finder, Terminal, etc.) can also receive the URL
-                // when the user drags a tab outside the window — the
-                // tab id NSString above stays `.ownProcess` so the
-                // raw `ObjectIdentifier(0x…)` literal never escapes.
-                provider.registerObject(folderURL as NSURL, visibility: .all)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 4).onChanged { _ in
+                startTabDrag(tab)
             }
-            return provider
-        }
+        )
         .background(
             // Snapshot the live chip width so the drop delegate can
             // decide leading vs trailing half from the cursor position.
@@ -432,18 +387,17 @@ struct BrowserPaneView: View {
                     .onChange(of: geo.size.width) { _, new in tabChipWidths[idx] = new }
             }
         )
-        .opacity(draggingTabID == id ? 0.35 : 1)
+        .opacity(tabDragCoordinator.sourceTabID == id ? 0.35 : 1)
         .onDrop(
-            of: [UTType.plainText.identifier],
+            of: [DragDropSupport.tabTypeIdentifier],
             delegate: TabReorderDropDelegate(
-                paneVM: paneVM,
                 paneIndex: index,
+                coord: tabDragCoordinator,
                 resolveInsertionIndex: { info in
                     let width = tabChipWidths[idx] ?? 100
                     return info.location.x < width / 2 ? idx : idx + 1
                 },
-                insertionPreview: $tabDropInsertionIndex,
-                draggingID: $draggingTabID
+                insertionPreview: $tabDropInsertionIndex
             )
         )
     }
@@ -935,10 +889,10 @@ struct BrowserPaneView: View {
             // We use the lower-level NSItemProvider API so a single drop can carry
             // a multi-item internal selection (see DragDropSupport).
             .onDrop(of: DragDropSupport.acceptedDropTypes, isTargeted: $paneIsDropTargeted) { providers in
-                guard let folder = viewModel.folderURL else { return false }
+                guard !DragDropSupport.containsTab(providers), let folder = viewModel.folderURL else { return false }
                 let modifiers = NSEvent.modifierFlags
                 Task {
-                    let urls = await DragDropSupport.resolveURLs(from: providers)
+                    let urls = await DragDropSupport.resolveFileDropURLs(from: providers)
                     guard !urls.isEmpty else { return }
                     await MainActor.run {
                         viewModel.acceptDrop(
@@ -1136,9 +1090,10 @@ struct BrowserPaneView: View {
                     set: { rowDropTargeted = $0 ? entry.id : nil }
                 )
             ) { providers in
+                guard !DragDropSupport.containsTab(providers) else { return false }
                 let modifiers = NSEvent.modifierFlags
                 Task {
-                    let urls = await DragDropSupport.resolveURLs(from: providers)
+                    let urls = await DragDropSupport.resolveFileDropURLs(from: providers)
                     guard !urls.isEmpty else { return }
                     await MainActor.run {
                         viewModel.acceptDrop(

@@ -12,7 +12,8 @@ struct MainWindowView: View {
     @StateObject private var pane1: PaneTabsViewModel
     @StateObject private var pane2: PaneTabsViewModel
     @StateObject private var pane3: PaneTabsViewModel
-    @StateObject private var sidebar: SidebarViewModel
+    @ObservedObject private var sidebar: SidebarViewModel
+    @StateObject private var tabDrag = TabDragCoordinator()
 
     @State private var layout: PaneLayout
     @State private var windowCommands = BrowserWindowCommands()
@@ -24,25 +25,9 @@ struct MainWindowView: View {
     /// window's first responder on appearance.
     @State private var searchActive: Bool = false
 
-    /// Owning ID of the project this view instance was constructed for.
-    /// `mqdirApp` keys this view on `workspace.workspace.activeProjectID`,
-    /// so a project switch tears down the old `MainWindowView` (and its
-    /// `@StateObject` panes) and instantiates a fresh one — no need to
-    /// reload pane state in place.
+    private let windowID: UUID
     private let projectID: UUID
-
-    /// Last persistable state pushed into the workspace, cached so
-    /// `scheduleSave()` can early-return when an `objectWillChange` carried
-    /// no persistable delta. Every pane VM forwards *every* nested tab's
-    /// `@Published` change (selection moves, `isLoading` flips, search
-    /// keystrokes, rename-draft edits) — most of which never touch the
-    /// serialized snapshot. Without this gate a held arrow key rebuilds and
-    /// re-pushes a full 4-pane `WindowState` on every key-repeat. `WindowState`
-    /// and `Favorite` are `Equatable`, so the compare is a cheap value-type
-    /// walk. `nil` until the first save schedules so the very first mutation
-    /// always lands.
     @State private var lastScheduledState: WindowState?
-    @State private var lastScheduledFavorites: [Favorite]?
 
     /// Cached free-space string for the focused pane's volume. `freeSpaceString()`
     /// did a synchronous `volumeAvailableCapacityForImportantUsage` stat on
@@ -55,14 +40,16 @@ struct MainWindowView: View {
 
     init(
         workspace: WorkspaceManager,
-        repoCallout: RepoCalloutController
+        repoCallout: RepoCalloutController,
+        windowID: UUID,
+        projectID: UUID
     ) {
         self.workspace = workspace
         self._integrations = StateObject(wrappedValue: IntegrationsSidebarModel(provider: workspace.workspace.settings.integrationProvider))
         self.repoCallout = repoCallout
-        let project = workspace.activeProject
-        self.projectID = project.id
-        let state = project.state
+        self.windowID = windowID
+        self.projectID = projectID
+        let state = workspace.snapshot(windowID: windowID, projectID: projectID)
 
         self._layout = State(initialValue: state.layout)
         self._focusedPaneIndex = State(
@@ -79,12 +66,7 @@ struct MainWindowView: View {
         self._pane2 = StateObject(wrappedValue: PaneTabsViewModel(state: panes[2]))
         self._pane3 = StateObject(wrappedValue: PaneTabsViewModel(state: panes[3]))
 
-        // Sidebar mirrors the workspace-level Favorites list. Mutations
-        // round-trip back through `workspace.setFavorites` (see the save
-        // trigger in `SaveTriggers`).
-        self._sidebar = StateObject(
-            wrappedValue: SidebarViewModel(favorites: workspace.workspace.favorites)
-        )
+        self._sidebar = ObservedObject(wrappedValue: workspace.sidebar)
     }
 
     var body: some View {
@@ -100,12 +82,13 @@ struct MainWindowView: View {
             .background(Theme.Color.windowBg)
             .focusedSceneValue(\.browserWindowCommands, windowCommands)
             .sheet(item: $folderComparison) { FolderComparisonView(request: $0) }
-            .onDisappear { scheduleSave() }
             .onReceive(NotificationCenter.default.publisher(for: ExternalFolderRequests.changed)) { _ in openExternalFolders() }
             .onChange(of: integrations.provider) { _, provider in workspace.setIntegrationProvider(provider) }
+            .onChange(of: workspace.workspace.settings.integrationProvider) { _, provider in
+                integrations.provider = provider
+            }
             .modifier(SaveTriggers(
                 pane0: pane0, pane1: pane1, pane2: pane2, pane3: pane3,
-                sidebar: sidebar,
                 layout: $layout,
                 focusedPaneIndex: $focusedPaneIndex,
                 scheduleSave: scheduleSave
@@ -140,7 +123,7 @@ struct MainWindowView: View {
                 // project switch (this view is keyed on activeProjectID
                 // and gets re-instantiated, so the coordinator gets
                 // fresh references for the active project).
-                TabDragCoordinator.shared.register(panes: [pane0, pane1, pane2, pane3])
+                tabDrag.register(panes: [pane0, pane1, pane2, pane3])
                 // Once-per-process launch counter for the repo callout
                 // gate. The controller guards against re-fires on
                 // project switch.
@@ -166,6 +149,9 @@ struct MainWindowView: View {
                 selectedURL: $sidebarSelection,
                 // VM-memoized — see `FolderBrowserViewModel.tagSummaries`.
                 tagsSummary: focusedPane.tagSummaries,
+                windowID: windowID,
+                projectID: projectID,
+                beforeProjectChange: scheduleSave,
                 onTagSelected: { tag in
                     // Dedicated tag filter: shows only current-folder entries
                     // whose `tagNames` contain this exact name — so a file
@@ -216,46 +202,17 @@ struct MainWindowView: View {
         )
     }
 
-    /// Push the current snapshot into the project that owns this view.
-    /// `WorkspaceManager` owns the debounce window and the disk write —
-    /// this view just keeps the in-memory model current after every
-    /// observable mutation.
-    ///
-    /// Gated on a value-equality compare against the last-pushed snapshot:
-    /// the pane VMs fan out *every* transient `@Published` change (selection
-    /// moves do persist via `selectedURLPaths`, but `isLoading` / `isSearching`
-    /// / `searchResults` / `renameDraft` churn does not), so without this most
-    /// emissions would rebuild and re-push an identical `WindowState`. The
-    /// snapshot itself is still built per emission — that's unavoidable while
-    /// the change signal is a bare `objectWillChange` — but the `updateProject`
-    /// / `setFavorites` round-trip (which each schedule a 500 ms debounced disk
-    /// write) only fires for the half that actually changed.
     @MainActor
     private func scheduleSave() {
         let state = snapshot()
-        if state != lastScheduledState {
-            workspace.updateProject(id: projectID) { $0.state = state }
-            lastScheduledState = state
-        }
-        guard workspace.workspace.activeProjectID == projectID else { return }
-        // Favorites edit through the sidebar VM also feed in here so the
-        // workspace's cross-project list stays in sync.
-        let favorites = sidebar.favorites
-        if favorites != lastScheduledFavorites {
-            workspace.setFavorites(favorites)
-            lastScheduledFavorites = favorites
-        }
+        guard state != lastScheduledState else { return }
+        lastScheduledState = state
+        workspace.saveSnapshot(state, windowID: windowID, projectID: projectID)
     }
 
-    /// On app termination — flush the latest snapshot synchronously so
-    /// the runloop teardown can't cancel the debounced disk write.
     @MainActor
     private func saveSynchronously() {
-        let state = snapshot()
-        workspace.updateProject(id: projectID) { $0.state = state }
-        if workspace.workspace.activeProjectID == projectID {
-            workspace.setFavorites(sidebar.favorites)
-        }
+        scheduleSave()
         workspace.saveSynchronously()
     }
 
@@ -577,10 +534,10 @@ struct MainWindowView: View {
         BrowserPaneView(
             index: index,
             paneVM: paneVM(at: index),
-            isFocused: focusedPaneIndex == index
-        ) {
-            focusedPaneIndex = index
-        }
+            isFocused: focusedPaneIndex == index,
+            onFocus: { focusedPaneIndex = index },
+            tabDragCoordinator: tabDrag
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -697,7 +654,6 @@ private struct SaveTriggers: ViewModifier {
     @ObservedObject var pane1: PaneTabsViewModel
     @ObservedObject var pane2: PaneTabsViewModel
     @ObservedObject var pane3: PaneTabsViewModel
-    @ObservedObject var sidebar: SidebarViewModel
     @Binding var layout: PaneLayout
     @Binding var focusedPaneIndex: Int
     let scheduleSave: () -> Void
@@ -715,7 +671,6 @@ private struct SaveTriggers: ViewModifier {
             .onReceive(pane1.objectWillChange.persistedChanges) { _ in scheduleSave() }
             .onReceive(pane2.objectWillChange.persistedChanges) { _ in scheduleSave() }
             .onReceive(pane3.objectWillChange.persistedChanges) { _ in scheduleSave() }
-            .onReceive(sidebar.objectWillChange.persistedChanges) { _ in scheduleSave() }
     }
 }
 
@@ -915,9 +870,7 @@ private struct GlobalNotifications: ViewModifier {
 }
 
 #Preview {
-    MainWindowView(
-        workspace: WorkspaceManager(),
-        repoCallout: RepoCalloutController()
-    )
+    BrowserWindowScene(workspace: WorkspaceManager(persistence: nil),
+                       repoCallout: RepoCalloutController(), windowID: UUID())
         .frame(width: 1100, height: 700)
 }

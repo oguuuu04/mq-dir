@@ -10,9 +10,13 @@ final class StateWriter: Sendable {
         self.write = write
     }
 
-    func enqueue(_ state: WorkspaceState) {
+    func enqueue(_ state: WorkspaceState, onFailure: @escaping @Sendable (String) -> Void = { _ in }) {
         queue.async { [write] in
-            do { try write(state) } catch { Self.log(error) }
+            do { try write(state) }
+            catch {
+                Self.log(error)
+                onFailure(error.localizedDescription)
+            }
         }
     }
 
