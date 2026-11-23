@@ -14,6 +14,7 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var workspace: WorkspaceState
     @Published var recoveryMessage: String?
     let sidebar: SidebarViewModel
+    let initialWindowID: UUID
 
     private var favoritesSubscription: AnyCancellable?
     private var launchSessions: [UUID]?
@@ -50,16 +51,13 @@ final class WorkspaceManager: ObservableObject {
         self.workspace = loaded
         self.sidebar = SidebarViewModel(favorites: loaded.favorites)
         self.launchSessions = loaded.windowSessions?.map(\.id)
+        self.initialWindowID = loaded.windowSessions?.first?.id ?? UUID()
         favoritesSubscription = sidebar.$favorites.dropFirst().sink { [weak self] favorites in
             self?.mutate { $0.favorites = favorites }
         }
     }
 
     // MARK: Window sessions
-
-    var initialWindowID: UUID {
-        launchSessions?.first ?? UUID()
-    }
 
     func takeRestorationIDs(excluding current: UUID) -> [UUID] {
         let ids = launchSessions ?? []

@@ -40,6 +40,7 @@ final class WorkspaceSavingTests: XCTestCase {
         XCTAssertEqual(restored.initialWindowID, a)
         XCTAssertEqual(restored.takeRestorationIDs(excluding: a), [b])
         XCTAssertEqual(restored.takeRestorationIDs(excluding: a), [])
+        XCTAssertEqual(restored.initialWindowID, a)
         XCTAssertEqual(restored.session(a)?.projectID, second.id)
         XCTAssertEqual(restored.session(b)?.projectID, first.id)
         restored.switchTo(projectID: first.id, in: a)

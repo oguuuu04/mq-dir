@@ -23,6 +23,18 @@ struct mqdirApp: App {
     }
 
     var body: some Scene {
+        browserScene
+
+        // Standard macOS Preferences window (⌘,). Phase 3 ships the
+        // appearance picker; future settings — keyboard customizer,
+        // archive handler — will land as additional Form sections.
+        Settings {
+            SettingsView(workspace: workspace)
+                .preferredColorScheme(workspace.workspace.settings.colorScheme.preferred)
+        }
+    }
+
+    private var browserScene: some Scene {
         WindowGroup("File Manager", id: "browser", for: UUID.self) { $windowID in
             BrowserWindowScene(workspace: workspace, repoCallout: repoCallout, windowID: windowID)
                 .frame(minWidth: 900, minHeight: 600)
@@ -34,15 +46,8 @@ struct mqdirApp: App {
         .commands {
             MenuCommands(workspace: workspace)
         }
-
-        // Standard macOS Preferences window (⌘,). Phase 3 ships the
-        // appearance picker; future settings — keyboard customizer,
-        // archive handler — will land as additional Form sections.
-        Settings {
-            SettingsView(workspace: workspace)
-                .preferredColorScheme(workspace.workspace.settings.colorScheme.preferred)
-        }
     }
+
 }
 
 /// This root survives a Workspace switch. Its SwiftUI scene value identifies
@@ -52,6 +57,7 @@ struct BrowserWindowScene: View {
     @ObservedObject var repoCallout: RepoCalloutController
     let windowID: UUID
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         Group {
@@ -67,7 +73,14 @@ struct BrowserWindowScene: View {
         .background(WindowCloseObserver {
             if !AppDelegate.isQuitting { workspace.closeWindow(windowID) }
         })
-        .task {
+        .task(id: windowID) {
+            // macOS can replay an old scene value after an upgrade. Do
+            // not recreate a session absent from the saved window list.
+            guard windowID == workspace.initialWindowID || workspace.session(windowID) != nil else {
+                openWindow(id: "browser", value: workspace.initialWindowID)
+                dismissWindow(id: "browser", value: windowID)
+                return
+            }
             workspace.attachWindow(windowID)
             for id in workspace.takeRestorationIDs(excluding: windowID) {
                 openWindow(id: "browser", value: id)
@@ -91,11 +104,12 @@ private struct WindowCloseObserver: NSViewRepresentable {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: nil)
             if let window {
-                NotificationCenter.default.addObserver(self, selector: #selector(willClose),
+                window.isRestorable = false
+                NotificationCenter.default.addObserver(self, selector: #selector(willClose(_:)),
                                                        name: NSWindow.willCloseNotification, object: window)
             }
         }
 
-        @objc private func willClose() { onClose?() }
+        @objc private func willClose(_ notification: Notification) { onClose?() }
     }
 }

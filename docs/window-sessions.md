@@ -14,9 +14,9 @@ All mutations enter the main-actor WorkspaceManager. It debounces the
 combined state and sends it to one FIFO writer. Each open browser refreshes
 its snapshot on quit and flushes through that writer. Explicit AppKit window
 close removes the session and immediately flushes it, while app quit keeps
-the open sessions. The first browser scene asks SwiftUI to open the other
-saved UUIDs. SwiftUI can match an already restored window to the same UUID.
-Window positions and stacking remain under macOS control.
+the open sessions. The first browser scene asks SwiftUI to open the other saved UUIDs. The
+app drives browser restoration to prevent stale macOS scene records from
+reopening closed windows. Window positions and stacking are not saved.
 
 ## On-disk format
 
