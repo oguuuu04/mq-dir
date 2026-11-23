@@ -16,6 +16,10 @@ struct SidebarView: View {
     /// Tap handler for a sidebar tag row. The owning view typically
     /// pushes the name into the focused tab's `searchQuery` so the
     /// list filters down to matching items.
+    let windowID: UUID
+    let projectID: UUID
+    let beforeProjectChange: () -> Void
+    let tabDrag: TabDragCoordinator
     let onTagSelected: (String) -> Void
     let onSelect: (URL) -> Void
     let onOpenInNewTab: (URL) -> Void
@@ -336,7 +340,8 @@ struct SidebarView: View {
                     .foregroundStyle(Theme.Color.labelTertiary)
                 Spacer(minLength: 0)
                 Button {
-                    workspace.createProject()
+                    beforeProjectChange()
+                    workspace.createProject(in: windowID)
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 9, weight: .bold))
@@ -359,7 +364,7 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func projectRow(_ project: Project) -> some View {
-        let isActive = workspace.workspace.activeProjectID == project.id
+        let isActive = projectID == project.id
         let isEditing = editingProjectID == project.id
         let isDropTarget = projectRowDropTargetedID == project.id
         let isOnlyProject = workspace.workspace.projects.count == 1
@@ -407,11 +412,15 @@ struct SidebarView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard !isEditing else { return }
-            workspace.switchTo(projectID: project.id)
+            beforeProjectChange()
+            workspace.switchTo(projectID: project.id, in: windowID)
         }
         .contextMenu {
             Button("Rename") { startProjectRename(project) }
-            Button("Duplicate Project") { workspace.duplicateProject(project.id) }
+            Button("Duplicate Project") {
+                beforeProjectChange()
+                workspace.duplicateProject(project.id, in: windowID)
+            }
             Button("Delete", role: .destructive) {
                 workspace.delete(project.id)
             }
@@ -668,7 +677,7 @@ struct SidebarView: View {
                     // when it did, clearing here flips
                     // `BrowserPaneView`'s opacity overlay back on so
                     // the source tab stops looking disabled.
-                    TabDragCoordinator.shared.clear()
+                    tabDrag.clear()
                 }
                 return
             }

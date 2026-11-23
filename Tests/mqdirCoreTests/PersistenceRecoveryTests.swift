@@ -23,6 +23,43 @@ final class PersistenceRecoveryTests: XCTestCase {
         if let backup = backups.first { XCTAssertEqual(try Data(contentsOf: backup), original) }
     }
 
+    func testDamagedWindowSessionPreservesValidWindowsAndBacksUpOriginal() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let service = try PersistenceService(stateURL: root.appendingPathComponent("state.json"))
+        let project = Project(name: "Research")
+        let other = Project(name: "Notes")
+        let windowID = UUID()
+        let active = UUID()
+        var snapshot = WindowState.empty
+        snapshot.panes[0] = PaneState(tabs: [TabState(includeHidden: true), TabState(previewVisible: true)], activeTabIndex: 1)
+        let initial = WorkspaceState(
+            favoritesSeeded: true, activeProjectID: project.id, projects: [project, other],
+            windowSessions: [WindowSession(id: windowID, projectID: active, snapshots: [project.id.uuidString: snapshot])]
+        )
+        let bytes = try JSONEncoder().encode(initial)
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var valid = try XCTUnwrap((document["windowSessions"] as? [[String: Any]])?.first)
+        var snapshots = try XCTUnwrap(valid["snapshots"] as? [String: Any])
+        snapshots[other.id.uuidString] = 17
+        valid["snapshots"] = snapshots
+        document["windowSessions"] = [17, valid, valid]
+        let damaged = try JSONSerialization.data(withJSONObject: document)
+        try damaged.write(to: service.fileURL)
+
+        var notice: String?
+        let loaded = try XCTUnwrap(service.loadState(onRecovery: { notice = $0 }))
+        XCTAssertNotNil(notice)
+        XCTAssertEqual(loaded.windowSessions, [
+            WindowSession(id: windowID, projectID: project.id, snapshots: [project.id.uuidString: snapshot])
+        ])
+        XCTAssertEqual(loaded.projects, [project, other])
+        let backup = try XCTUnwrap(fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .first { $0.lastPathComponent.hasPrefix("state.corrupt-") })
+        XCTAssertEqual(try Data(contentsOf: backup), damaged)
+    }
+
     func testLegacyPaneCountsPreserveRecordsWithoutCrashing() throws {
         for count in 0...8 {
             let panes = Array(repeating: ["includeHidden": true], count: count)

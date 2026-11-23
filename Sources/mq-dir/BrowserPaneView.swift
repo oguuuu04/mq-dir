@@ -19,6 +19,7 @@ import UniformTypeIdentifiers
 private struct TabReorderDropDelegate: DropDelegate {
     let paneVM: PaneTabsViewModel
     let paneIndex: Int
+    let coord: TabDragCoordinator
     /// Insertion index this delegate represents, computed from hover
     /// position. For per-tab delegates we resolve leading vs trailing
     /// half via the chip width snapshot. For the trailing zone after
@@ -30,6 +31,9 @@ private struct TabReorderDropDelegate: DropDelegate {
     func dropEntered(info: DropInfo) {
         insertionPreview = resolveInsertionIndex(info)
     }
+
+    @MainActor
+    func validateDrop(info: DropInfo) -> Bool { coord.sourceTabID != nil }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         let next = resolveInsertionIndex(info)
@@ -43,7 +47,6 @@ private struct TabReorderDropDelegate: DropDelegate {
 
     @MainActor
     func performDrop(info: DropInfo) -> Bool {
-        let coord = TabDragCoordinator.shared
         let insertionIndex = resolveInsertionIndex(info)
         let sourceTabID = coord.sourceTabID
         let sourcePaneIdx = coord.sourcePaneIndex
@@ -108,7 +111,7 @@ struct BrowserPaneView: View {
     /// insertion-marker preview the moment any drop completes — a
     /// belt-and-suspenders against SwiftUI processing a sibling drop
     /// zone's dropEntered AFTER our performDrop returns.
-    @ObservedObject private var tabDragCoordinator = TabDragCoordinator.shared
+    @ObservedObject var tabDragCoordinator: TabDragCoordinator
 
     /// Tab being dragged for in-pane reorder. Carries the source tab's
     /// identity so the drop target can resolve the right index even after
@@ -318,6 +321,7 @@ struct BrowserPaneView: View {
                 delegate: TabReorderDropDelegate(
                     paneVM: paneVM,
                     paneIndex: index,
+                    coord: tabDragCoordinator,
                     resolveInsertionIndex: { _ in paneVM.tabs.count },
                     insertionPreview: $tabDropInsertionIndex,
                     draggingID: $draggingTabID
@@ -396,7 +400,7 @@ struct BrowserPaneView: View {
         // terminals, text editors) don't see the drag at all and
         // therefore can't paste the literal `ObjectIdentifier(0x…)`
         // string. The actual reorder routing reads
-        // `TabDragCoordinator.shared` (which knows source pane +
+        // the window coordinator (which knows source pane +
         // tab id) rather than the pasteboard payload — the string is
         // only here to satisfy SwiftUI's drop-type matching.
         //
@@ -408,7 +412,7 @@ struct BrowserPaneView: View {
         // a no-op for them.
         .onDrag {
             draggingTabID = id
-            TabDragCoordinator.shared.begin(sourcePaneIndex: index, tabID: id)
+            tabDragCoordinator.begin(sourcePaneIndex: index, tabID: id)
             let provider = NSItemProvider()
             provider.registerObject(
                 String(describing: id) as NSString,
@@ -438,6 +442,7 @@ struct BrowserPaneView: View {
             delegate: TabReorderDropDelegate(
                 paneVM: paneVM,
                 paneIndex: index,
+                coord: tabDragCoordinator,
                 resolveInsertionIndex: { info in
                     let width = tabChipWidths[idx] ?? 100
                     return info.location.x < width / 2 ? idx : idx + 1

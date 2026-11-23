@@ -1,22 +1,8 @@
 import Foundation
 
-/// Cross-pane tab drag bookkeeping.
-///
-/// Tab reorder lives in `TabReorderDropDelegate` but had no way to learn
-/// which pane the dragged chip came from — a per-pane `@State` binding
-/// only sees same-pane drags. This singleton remembers (sourcePane,
-/// tabID) for the duration of a drag so a drop on a different pane can
-/// detach the tab from its origin and attach it to the destination.
-///
-/// Lifetime: a `MainWindowView` instance registers the four pane VMs on
-/// init via `register(panes:)`. A project switch tears down the
-/// `MainWindowView` (`.id(activeProjectID)` keys its identity) and the
-/// next instance re-registers, so the coordinator's pane references
-/// always match the live panes for the active project.
+/// Tracks tab reordering between the live panes of one browser window.
 @MainActor
 final class TabDragCoordinator: ObservableObject {
-    static let shared = TabDragCoordinator()
-
     private var allPanes: [PaneTabsViewModel] = []
     /// Published so each `BrowserPaneView` can observe the
     /// drag-in-flight state and clear its insertion-marker preview the
@@ -27,8 +13,6 @@ final class TabDragCoordinator: ObservableObject {
     /// pane a single source-of-truth signal.
     @Published private(set) var sourcePaneIndex: Int?
     @Published private(set) var sourceTabID: ObjectIdentifier?
-
-    private init() {}
 
     func register(panes: [PaneTabsViewModel]) {
         self.allPanes = panes
