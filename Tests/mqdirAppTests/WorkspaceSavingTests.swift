@@ -2,6 +2,15 @@ import XCTest
 
 final class WorkspaceSavingTests: XCTestCase {
     @MainActor
+    func testUnresolvedBookmarkAndSelectionStayInSnapshot() {
+        let original = TabState(folderBookmark: Data([1, 2, 3]), selectedURLPaths: ["/unavailable/file"])
+        let tab = FolderBrowserViewModel(state: original)
+        XCTAssertNil(tab.folderURL)
+        XCTAssertEqual(tab.tabSnapshot().folderBookmark, original.folderBookmark)
+        XCTAssertEqual(tab.tabSnapshot().selectedURLPaths, original.selectedURLPaths)
+    }
+
+    @MainActor
     func testWindowSnapshotsSurviveSwitchingAndReloadWithoutOverwritingSharedSettings() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

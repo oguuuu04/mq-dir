@@ -322,9 +322,9 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
         self.pendingListScrollPath = state.listScrollPath
         self.pendingTreeScrollPath = state.treeScrollPath
 
+        self.currentBookmark = state.folderBookmark
         if let bookmark = state.folderBookmark,
            let resolved = PersistenceService.resolveBookmark(bookmark) {
-            self.currentBookmark = bookmark
             self.pendingListScrollPath = state.listScrollPath.flatMap { FileSystemService.restoredPath($0, under: resolved) }
             self.pendingTreeScrollPath = state.treeScrollPath.flatMap { FileSystemService.restoredPath($0, under: resolved) }
             self.expandedPaths = Set(state.expandedPaths.compactMap { FileSystemService.restoredPath($0, under: resolved) })
@@ -365,7 +365,7 @@ final class FolderBrowserViewModel: ObservableObject, Identifiable {
             sortAscending: sortAscending,
             includeHidden: includeHidden,
             columnWidths: columnWidths,
-            selectedURLPaths: selectedURLs.map(\.path),
+            selectedURLPaths: pendingRestoredSelection.isEmpty ? selectedURLs.map(\.path) : pendingRestoredSelection,
             viewMode: viewMode,
             expandedPaths: Array(expandedPaths),
             previewVisible: previewVisible,

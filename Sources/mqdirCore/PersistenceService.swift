@@ -762,11 +762,16 @@ struct PersistenceService: @unchecked Sendable {
     /// Creates a security-scoped bookmark for an existing folder URL.
     /// The caller stores the returned `Data` in `PaneState.folderBookmark`.
     static func makeBookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        #if MQDIR_SANDBOXED
+        return try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        #else
+        // An unsigned development build may be unable to create a scoped
+        // bookmark. A plain bookmark still restores folders in this build.
+        if let scoped = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            return scoped
+        }
+        return try url.bookmarkData()
+        #endif
     }
 
     /// Resolves a previously-saved bookmark back to its URL.
@@ -776,11 +781,18 @@ struct PersistenceService: @unchecked Sendable {
     /// caller can refresh on next openFolder rather than losing the entry.
     static func resolveBookmark(_ data: Data) -> URL? {
         var isStale = false
-        return try? URL(
+        let resolved = try? URL(
             resolvingBookmarkData: data,
-            options: [.withSecurityScope],
+            options: [.withSecurityScope, .withoutUI],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )
+        #if MQDIR_SANDBOXED
+        return resolved
+        #else
+        if let resolved { return resolved }
+        return try? URL(resolvingBookmarkData: data, options: [.withoutUI],
+                        relativeTo: nil, bookmarkDataIsStale: &isStale)
+        #endif
     }
 }
