@@ -14,6 +14,56 @@ import UniformTypeIdentifiers
 enum DragDropSupport {
     nonisolated static let mqdirSelectionTypeIdentifier = "com.mqdir.selection.urls"
 
+    nonisolated static let tabTypeIdentifier = "com.oguuuu04.filemanager.browser-tab"
+
+    struct TabPayload: Codable, Sendable {
+        let token: UUID
+        let folderURL: URL?
+    }
+
+    static func tabProvider(token: UUID, folderURL: URL?) -> NSItemProvider {
+        let provider = NSItemProvider()
+        let data = try? JSONEncoder().encode(TabPayload(token: token, folderURL: folderURL))
+        provider.registerDataRepresentation(forTypeIdentifier: tabTypeIdentifier, visibility: .ownProcess) { completion in
+            completion(data, nil)
+            return nil
+        }
+        return provider
+    }
+
+    static func tabPayload(from provider: NSItemProvider) async -> TabPayload? {
+        await withCheckedContinuation { continuation in
+            loadTabPayload(from: provider) { continuation.resume(returning: $0) }
+        }
+    }
+
+    static func loadTabPayload(from provider: NSItemProvider, completion: @escaping @Sendable (TabPayload?) -> Void) {
+        provider.loadDataRepresentation(forTypeIdentifier: tabTypeIdentifier) { data, _ in
+            completion(data.flatMap { try? JSONDecoder().decode(TabPayload.self, from: $0) })
+        }
+    }
+
+    static func containsTab(_ providers: [NSItemProvider]) -> Bool {
+        providers.contains { $0.registeredTypeIdentifiers.contains(tabTypeIdentifier) }
+    }
+
+    /// A mixed provider must never reach the filesystem drop path.
+    static func resolveFileDropURLs(from providers: [NSItemProvider]) async -> [URL] {
+        guard !containsTab(providers) else { return [] }
+        return await resolveURLs(from: providers)
+    }
+
+    static func resolveFavoriteURLs(from providers: [NSItemProvider]) async -> [URL] {
+        if !containsTab(providers) { return await resolveURLs(from: providers) }
+        var urls: [URL] = []
+        for provider in providers where containsTab([provider]) {
+            if let url = await tabPayload(from: provider)?.folderURL, url.isFileURL {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+
     // Drag-source construction lives in `AppKitFileDrag.swift` — we drive
     // NSDraggingSession directly with an NSPasteboardItem because
     // SwiftUI's `.onDrag` layers a promise on top of any NSItemProvider
@@ -24,7 +74,7 @@ enum DragDropSupport {
     /// Resolve an array of incoming NSItemProviders to file URLs. Prefers our
     /// private multi-selection type when present; otherwise falls back to the
     /// standard `public.file-url`.
-    static func resolveURLs(from providers: [NSItemProvider]) async -> [URL] {
+    private static func resolveURLs(from providers: [NSItemProvider]) async -> [URL] {
         var resolved: [URL] = []
 
         for provider in providers {

@@ -156,7 +156,7 @@ struct SidebarView: View {
                 .padding(.horizontal, 6)
         )
         .onDrop(
-            of: DragDropSupport.acceptedDropTypes,
+            of: DragDropSupport.acceptedDropTypes + [DragDropSupport.tabTypeIdentifier],
             isTargeted: $favSectionDropTargeted
         ) { providers in
             handleDrop(providers: providers, before: nil)
@@ -294,7 +294,7 @@ struct SidebarView: View {
                 )
             }
             .onDrop(
-                of: DragDropSupport.acceptedDropTypes + [UTType.plainText.identifier],
+                of: DragDropSupport.acceptedDropTypes + [DragDropSupport.tabTypeIdentifier] + [UTType.plainText.identifier],
                 isTargeted: Binding(
                     get: { favRowDropTargetedID == favorite.id },
                     set: { favRowDropTargetedID = $0 ? favorite.id : nil }
@@ -645,7 +645,7 @@ struct SidebarView: View {
     /// the `ObjectIdentifier(0x…)` literal.
     private func handleDrop(providers: [NSItemProvider], before targetID: Favorite.ID?) {
         Task {
-            let urls = await DragDropSupport.resolveURLs(from: providers)
+            let urls = await DragDropSupport.resolveFavoriteURLs(from: providers)
             if !urls.isEmpty {
                 await MainActor.run {
                     // Add each dropped URL, capturing the ID of every
@@ -681,7 +681,8 @@ struct SidebarView: View {
                 }
                 return
             }
-            // No URLs — fall back to favorite reorder via UUID payload.
+            // No URLs — plain text can be a favorite reorder, never a tab.
+            guard !DragDropSupport.containsTab(providers) else { return }
             if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) {
                 provider.loadObject(ofClass: NSString.self) { obj, _ in
                     guard let str = obj as? String,

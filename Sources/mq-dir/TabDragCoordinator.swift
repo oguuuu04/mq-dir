@@ -1,3 +1,5 @@
+import AppKit
+import Combine
 import Foundation
 
 /// Tracks tab reordering between the live panes of one browser window.
@@ -11,40 +13,47 @@ final class TabDragCoordinator: ObservableObject {
     /// processes a sibling drop zone's dropEntered AFTER performDrop
     /// returns, re-setting the preview. Observing this gives every
     /// pane a single source-of-truth signal.
-    @Published private(set) var sourcePaneIndex: Int?
+    private var sourcePaneIndex: Int?
+    private var token: UUID?
     @Published private(set) var sourceTabID: ObjectIdentifier?
 
     func register(panes: [PaneTabsViewModel]) {
         self.allPanes = panes
     }
 
-    func begin(sourcePaneIndex: Int, tabID: ObjectIdentifier) {
+    func begin(sourcePaneIndex: Int, tabID: ObjectIdentifier, folderURL: URL?) -> NSItemProvider {
+        let token = UUID()
+        self.token = token
         self.sourcePaneIndex = sourcePaneIndex
         self.sourceTabID = tabID
+        return DragDropSupport.tabProvider(token: token, folderURL: folderURL)
     }
 
     func clear() {
+        token = nil
         sourcePaneIndex = nil
         sourceTabID = nil
     }
 
-    /// Detach the dragging tab from its source pane and insert it into
-    /// `targetPaneIndex` at `tabIndex`. Returns true on success. Updates
-    /// `sourcePaneIndex` to the destination so a subsequent reorder
-    /// inside the destination pane works correctly during the same
-    /// drag session.
+    /// Authenticate against the active drag, not merely a stale source pane.
     @discardableResult
-    func moveTab(toPaneIndex targetPaneIndex: Int, atTabIndex tabIndex: Int) -> Bool {
-        guard let source = sourcePaneIndex,
+    func drop(_ payload: DragDropSupport.TabPayload, into targetPaneIndex: Int, at tabIndex: Int) -> Bool {
+        guard token == payload.token,
+              let source = sourcePaneIndex,
               let tabID = sourceTabID,
-              source != targetPaneIndex,
               allPanes.indices.contains(source),
               allPanes.indices.contains(targetPaneIndex)
         else { return false }
 
-        guard let detached = allPanes[source].detachTab(id: tabID) else { return false }
-        allPanes[targetPaneIndex].attachTab(detached, at: tabIndex)
-        sourcePaneIndex = targetPaneIndex
+        defer { clear() }
+        let origin = allPanes[source]
+        if source == targetPaneIndex {
+            guard let from = origin.tabs.firstIndex(where: { ObjectIdentifier($0) == tabID }) else { return false }
+            origin.move(from: from, to: tabIndex)
+        } else {
+            guard let detached = origin.detachTab(id: tabID) else { return false }
+            allPanes[targetPaneIndex].attachTab(detached, at: tabIndex)
+        }
         return true
     }
 }
