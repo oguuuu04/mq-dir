@@ -178,13 +178,11 @@ struct BrowserPaneView: View {
     @ViewBuilder
     private var emptyAreaContextMenu: some View {
         Button("New Folder") { viewModel.createNewFolder() }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(viewModel.folderURL == nil)
 
         Divider()
 
         Button("Paste") { viewModel.pasteFromPasteboard(normalizeHangul: normalizeHangulOnDragOut) }
-            .keyboardShortcut("v", modifiers: .command)
             .disabled(!viewModel.canPasteFiles || viewModel.folderURL == nil)
 
         Divider()
@@ -792,7 +790,8 @@ struct BrowserPaneView: View {
             TreeFileListView(
                 viewModel: viewModel,
                 isFocused: isFocused,
-                onFocus: onFocus
+                onFocus: onFocus,
+                onOpenInNewTab: { paneVM.newTab(folderURL: $0) }
             )
         } else {
             listWithHorizontalScroll
@@ -888,31 +887,31 @@ struct BrowserPaneView: View {
             // `.repeat` or holding the arrow key just fires once: the
             // system key-repeat events get dropped on the floor.
             .onKeyPress(.downArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrowKey(by: 1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
             .onKeyPress(.upArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrowKey(by: -1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
             .onKeyPress(.return, phases: [.down]) { keyPress in
-                // While a row is in inline-rename mode the Return key
-                // belongs to the TextField (commits the rename). Don't
-                // intercept it here or the parent's openSelected() races
-                // the TextField's onSubmit and reorders the events
-                // unpredictably. `phases: [.down]` switches the
-                // closure to the `KeyPress`-receiving overload so the
-                // ⌘ check below has a modifier set to read.
                 guard viewModel.renamingEntryID == nil else { return .ignored }
-                if !isFocused { onFocus() }
-                if keyPress.modifiers.contains(.command),
+                if keyPress.modifiers == .command,
+                   viewModel.selection.count == 1,
                    let entry = viewModel.selectedEntry, entry.isDirectory {
-                    AppCommand.openURLInNewTab(url: entry.url).post()
-                } else {
-                    viewModel.openSelected()
+                    if !isFocused { onFocus() }
+                    paneVM.newTab(folderURL: entry.url)
+                    return .handled
                 }
+                guard keyPress.modifiers.isEmpty,
+                      workspace.workspace.settings.binding(for: .rename) == ShortcutAction.rename.defaultBinding
+                else { return .ignored }
+                if !isFocused { onFocus() }
+                viewModel.beginRenameForActiveSelection()
                 return .handled
             }
             .onKeyPress(.space) {
@@ -1032,7 +1031,7 @@ struct BrowserPaneView: View {
             // mirrors Finder. Plain double-click stays the
             // "navigate into / launch file" path.
             if NSEvent.modifierFlags.contains(.command), entry.isDirectory {
-                AppCommand.openURLInNewTab(url: entry.url).post()
+                paneVM.newTab(folderURL: entry.url)
             } else {
                 viewModel.open(entry)
             }

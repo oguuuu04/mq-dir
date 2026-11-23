@@ -11,6 +11,20 @@ final class LayoutAndShortcutTests: XCTestCase {
         XCTAssertNotNil(ShortcutConflicts.reservedName(for: .init(key: .character("c"), modifiers: .command)))
         XCTAssertNotNil(ShortcutConflicts.reservedName(for: .init(key: .character("4"), modifiers: [.command, .option])))
         XCTAssertNil(ShortcutConflicts.reservedName(for: .init(key: .functionKey(8), modifiers: [])))
-        for action in ShortcutAction.allCases { XCTAssertNil(ShortcutConflicts.reservedName(for: action.defaultBinding)) }
+        for action in ShortcutAction.allCases { XCTAssertNil(ShortcutConflicts.reservedName(for: action.defaultBinding, allowing: action)) }
     }
+    func testFinderBindingsProtectReservedKeysAndKeepOtherOverrides() {
+        let open = ShortcutBinding(key: .character("o"), modifiers: .command)
+        let move = ShortcutBinding(key: .character("v"), modifiers: [.command, .option])
+        let customRename = ShortcutBinding(key: .functionKey(8), modifiers: [])
+        let settings = WorkspaceSettings(shortcutOverrides: [
+            .openFolder: open, .duplicate: move, .rename: customRename
+        ])
+        XCTAssertEqual(settings.binding(for: .openFolder), ShortcutAction.openFolder.defaultBinding)
+        XCTAssertEqual(settings.binding(for: .duplicate), ShortcutAction.duplicate.defaultBinding)
+        XCTAssertEqual(settings.binding(for: .rename), customRename)
+        XCTAssertEqual(settings.shortcutOverrides[.openFolder], open)
+        XCTAssertEqual(ShortcutAction.rename.defaultBinding, ShortcutBinding(key: .return, modifiers: []))
+    }
+
 }

@@ -141,14 +141,12 @@ struct SettingsView: View {
     /// Look for an existing customisable action already bound to
     /// `candidate`, ignoring the action currently being edited so
     /// re-saving an unchanged shortcut doesn't flag itself as a
-    /// conflict. Only checks the customisable set — collisions with
-    /// hardcoded shortcuts (Cut/Copy/Paste, system menus) are not
-    /// surfaced because we can't repoint those from this UI.
+    /// conflict. Checks fixed shortcuts and other customisable actions.
     private func conflictingAction(
         for candidate: ShortcutBinding,
         ignoring: ShortcutAction
     ) -> String? {
-        if let reserved = ShortcutConflicts.reservedName(for: candidate) { return reserved }
+        if let reserved = ShortcutConflicts.reservedName(for: candidate, allowing: ignoring) { return reserved }
         for action in ShortcutAction.allCases where action != ignoring {
             if workspace.workspace.settings.binding(for: action) == candidate {
                 return action.label
@@ -260,7 +258,7 @@ private struct KeyCaptureView: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-private final class KeyCaptureNSView: NSView {
+final class KeyCaptureNSView: NSView {
     var onCapture: ((ShortcutBinding) -> Void)?
     var onBareEscape: (() -> Void)?
 
@@ -275,6 +273,14 @@ private final class KeyCaptureNSView: NSView {
             guard let self, let window = self.window else { return }
             window.makeFirstResponder(self)
         }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self, event.type == .keyDown else {
+            return super.performKeyEquivalent(with: event)
+        }
+        keyDown(with: event)
+        return true
     }
 
     override func keyDown(with event: NSEvent) {

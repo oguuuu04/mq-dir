@@ -75,7 +75,7 @@ targets:
     platform: macOS
     sources:
       - path: Tests/mqdirAppTests
-      - path: Sources/mq-dir/CutPasteboard.swift
+      - path: Sources/mq-dir/PasteboardFiles.swift
       - path: Sources/mq-dir/PersistedChanges.swift
       - path: Sources/mq-dir/WorkspaceManager.swift
       - path: Sources/mq-dir/SidebarViewModel.swift

@@ -1,7 +1,20 @@
 import AppKit
 import SwiftUI
 
+private struct BrowserWindowCommandsKey: FocusedValueKey {
+    typealias Value = BrowserWindowCommands
+}
+
+extension FocusedValues {
+    var browserWindowCommands: BrowserWindowCommands? {
+        get { self[BrowserWindowCommandsKey.self] }
+        set { self[BrowserWindowCommandsKey.self] = newValue }
+    }
+}
+
 struct MenuCommands: Commands {
+    @FocusedValue(\.browserWindowCommands) private var windowCommands
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var fileWork = FileWorkCenter.shared
     @ObservedObject var workspace: WorkspaceManager
 
@@ -16,7 +29,7 @@ struct MenuCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
-                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                if let editor = Self.textEditor {
                     editor.undoManager?.undo()
                 } else if let job = fileWork.lastUndoableJob {
                     fileWork.undo(job)
@@ -24,30 +37,33 @@ struct MenuCommands: Commands {
             }
             .keyboardShortcut("z", modifiers: .command)
             Button("Redo text editing") {
-                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                if let editor = Self.textEditor {
                     editor.undoManager?.redo()
                 }
             }
             .keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .newItem) {
+            Button("New Window") { openWindow(id: "browser") }
+                .keyboardShortcut("n", modifiers: .command)
             Button("New Tab") { post(.newTab) }
                 .keyboardShortcut(binding(.newTab))
             Divider()
             Button("Open Folder...") { post(.openFolder) }
                 .keyboardShortcut(binding(.openFolder))
             Button("Open Selected") { post(.openSelected) }
-                .keyboardShortcut(.return, modifiers: [])
+                .keyboardShortcut("o", modifiers: .command)
+            Button("Open Selected (Alternate)") {
+                dispatch(text: #selector(NSResponder.moveToEndOfDocument(_:)), file: .openSelected)
+            }
+                .keyboardShortcut(.downArrow, modifiers: .command)
+            Button("New Folder") { post(.newFolder) }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Close Tab") { post(.closeTab) }
                 .keyboardShortcut(binding(.closeTab))
             Button("Reopen Closed Tab") { post(.reopenClosedTab) }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Divider()
-            // ⌘⇧R is now Edit → Rename (Eagle convention). Reveal in
-            // Finder loses its shortcut and lives on the right-click
-            // menu + the menu bar entry; the alternative would be
-            // double-binding ⌘⇧R, which silently breaks unrelated
-            // menu shortcut routing on macOS.
             Button("Reveal in Finder") { post(.revealSelected) }
                 .keyboardShortcut(binding(.revealInFinder))
             Divider()
@@ -63,12 +79,14 @@ struct MenuCommands: Commands {
         // forward to its native AppKit action so the user's expected
         // text-Cmd+C / Cmd+V / Cmd+A still works there.
         CommandGroup(replacing: .pasteboard) {
-            Button("Cut") { dispatch(text: #selector(NSText.cut(_:)), file: .cut) }
+            Button("Cut") { dispatch(text: #selector(NSText.cut(_:)), file: nil) }
                 .keyboardShortcut("x", modifiers: .command)
             Button("Copy") { dispatch(text: #selector(NSText.copy(_:)), file: .copy) }
                 .keyboardShortcut("c", modifiers: .command)
             Button("Paste") { dispatch(text: #selector(NSText.paste(_:)), file: .paste) }
                 .keyboardShortcut("v", modifiers: .command)
+            Button("Move Items Here") { post(.movePasteboardItems) }
+                .keyboardShortcut("v", modifiers: [.command, .option])
             // ⌘⌫ matches Finder's "Move to Trash". The dispatch helper
             // forwards plain Delete (text-edit selector) when a TextField
             // is the first responder, but ⌘⌫ in a TextField is rare on
@@ -101,8 +119,12 @@ struct MenuCommands: Commands {
                 .keyboardShortcut("c", modifiers: [.command, .option, .shift])
             Button("Copy Name") { post(.copyName) }
             Divider()
-            Button("Rename") { post(.rename) }
-                .keyboardShortcut(binding(.rename))
+            let rename = binding(.rename)
+            // Bare Return belongs to the list so the inline field can submit it.
+            Button(rename == ShortcutAction.rename.defaultBinding ? "Rename (Return)" : "Rename") {
+                post(.rename)
+            }
+            .keyboardShortcut(rename == ShortcutAction.rename.defaultBinding ? nil : rename.keyboardShortcut)
         }
 
         CommandGroup(after: .textEditing) {
@@ -119,7 +141,7 @@ struct MenuCommands: Commands {
                 .keyboardShortcut(binding(.forward))
             Button("Reload") { post(.reload) }
                 .keyboardShortcut(binding(.reload))
-            Button("Parent Folder") { post(.parentFolder) }
+            Button("Parent Folder") { dispatch(text: #selector(NSResponder.moveToBeginningOfDocument(_:)), file: .parentFolder) }
                 .keyboardShortcut(binding(.parentFolder))
             Button("Toggle Hidden Files") { post(.toggleHiddenFiles) }
                 .keyboardShortcut(binding(.toggleHiddenFiles))
@@ -185,25 +207,22 @@ struct MenuCommands: Commands {
 
 
     private func post(_ command: AppCommand) {
-        command.post()
+        guard Self.textEditor == nil, !(NSApp.keyWindow?.firstResponder is KeyCaptureNSView) else { return }
+        windowCommands?.send(command)
     }
 
-    /// Edit-menu dispatcher. Only forward to the system text selector
-    /// when the focused responder is genuinely editing text — i.e. the
-    /// NSTextField field editor that powers the search box, inline
-    /// rename, etc. A plain `responder is NSText` check used to fire
-    /// here too, but `QLPreviewView` installs its own read-only
-    /// NSTextView as first responder once it appears, so ⌘C on a
-    /// .docx (or any non-markdown file with a text-rendered Quick
-    /// Look preview) was silently sent to that view as a no-op
-    /// instead of running our file-level copy. `isFieldEditor` is
-    /// the load-bearing filter — only true for the field editor an
-    /// NSTextField installs while the user is typing.
-    private func dispatch(text selector: Selector, file command: AppCommand) {
-        let responder = NSApp.keyWindow?.firstResponder
-        if let textView = responder as? NSTextView, textView.isFieldEditor {
-            NSApp.sendAction(selector, to: responder, from: nil)
-        } else {
+    // Quick Look can install a read-only NSTextView as first responder.
+    // Only editable text views and field editors own text commands.
+    private static var textEditor: NSTextView? {
+        guard let view = NSApp.keyWindow?.firstResponder as? NSTextView,
+              view.isFieldEditor || view.isEditable else { return nil }
+        return view
+    }
+
+    private func dispatch(text selector: Selector, file command: AppCommand?) {
+        if let editor = Self.textEditor {
+            NSApp.sendAction(selector, to: editor, from: nil)
+        } else if let command {
             post(command)
         }
     }

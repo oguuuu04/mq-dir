@@ -18,6 +18,7 @@ struct SidebarView: View {
     /// list filters down to matching items.
     let onTagSelected: (String) -> Void
     let onSelect: (URL) -> Void
+    let onOpenInNewTab: (URL) -> Void
 
     /// Custom drag-payload identifier for project rows. Distinct from the
     /// favorite reorder type so dragging a project onto a favorite (or
@@ -534,7 +535,7 @@ struct SidebarView: View {
             // the Finder convention used by tree-view ⌘-click).
             // Plain click → swap the focused pane's active tab to it.
             if NSEvent.modifierFlags.contains(.command) {
-                AppCommand.openURLInNewTab(url: url).post()
+                onOpenInNewTab(url)
             } else {
                 selectedURL = url
                 onSelect(url)

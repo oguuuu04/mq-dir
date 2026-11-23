@@ -16,6 +16,7 @@ struct TreeFileListView: View {
     @EnvironmentObject private var workspace: WorkspaceManager
     let isFocused: Bool
     let onFocus: () -> Void
+    let onOpenInNewTab: (URL) -> Void
 
     @FocusState private var treeFocused: Bool
 
@@ -76,12 +77,14 @@ struct TreeFileListView: View {
             // Shift+↑/↓ range selection in tree mode. `.repeat` keeps
             // a held arrow key auto-scrolling like Finder does.
             .onKeyPress(.downArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrow(by: 1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
             .onKeyPress(.upArrow, phases: [.down, .repeat]) { keyPress in
-                guard viewModel.renamingEntryID == nil else { return .ignored }
+                guard viewModel.renamingEntryID == nil,
+                      keyPress.modifiers.isEmpty || keyPress.modifiers == .shift else { return .ignored }
                 handleArrow(by: -1, extending: keyPress.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
@@ -97,13 +100,18 @@ struct TreeFileListView: View {
             }
             .onKeyPress(.return, phases: [.down]) { keyPress in
                 guard viewModel.renamingEntryID == nil else { return .ignored }
-                if !isFocused { onFocus() }
-                if keyPress.modifiers.contains(.command),
+                if keyPress.modifiers == .command,
+                   viewModel.selection.count == 1,
                    let entry = viewModel.selectedEntry, entry.isDirectory {
-                    AppCommand.openURLInNewTab(url: entry.url).post()
-                } else {
-                    viewModel.openSelected()
+                    if !isFocused { onFocus() }
+                    onOpenInNewTab(entry.url)
+                    return .handled
                 }
+                guard keyPress.modifiers.isEmpty,
+                      workspace.workspace.settings.binding(for: .rename) == ShortcutAction.rename.defaultBinding
+                else { return .ignored }
+                if !isFocused { onFocus() }
+                viewModel.beginRenameForActiveSelection()
                 return .handled
             }
             .onKeyPress(.space) {
@@ -238,7 +246,7 @@ struct TreeFileListView: View {
             // Plain double-click navigates into the folder / launches
             // the file as before.
             if NSEvent.modifierFlags.contains(.command), entry.isDirectory {
-                AppCommand.openURLInNewTab(url: entry.url).post()
+                onOpenInNewTab(entry.url)
             } else if entry.isDirectory {
                 viewModel.openFolder(entry.url)
             } else {

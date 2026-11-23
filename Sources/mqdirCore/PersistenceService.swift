@@ -392,7 +392,11 @@ struct WorkspaceSettings: Codable, Equatable, Sendable {
     /// `defaultBinding` otherwise. Single source of truth for both
     /// the menu attach and the Settings row preview.
     func binding(for action: ShortcutAction) -> ShortcutBinding {
-        shortcutOverrides[action] ?? action.defaultBinding
+        if let override = shortcutOverrides[action],
+           ShortcutConflicts.reservedName(for: override, allowing: action) == nil {
+            return override
+        }
+        return action.defaultBinding
     }
 
     private enum CodingKeys: String, CodingKey {
